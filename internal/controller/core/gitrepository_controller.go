@@ -1,63 +1,113 @@
-/*
-Copyright 2026.
+// SPDX-FileCopyrightText: 2026 SAP SE or an SAP affiliate company and Open Control Plane contributors
+// SPDX-License-Identifier: Apache-2.0
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
-
-package core
+package controller
 
 import (
 	"context"
+	"fmt"
 
-	"k8s.io/apimachinery/pkg/runtime"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	corev1alpha1 "github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1"
 )
 
-// GitRepositoryReconciler reconciles a GitRepository object
-type GitRepositoryReconciler struct {
-	client.Client
-	Scheme *runtime.Scheme
-}
+const (
+	condCredentialResolved   = "CredentialResolved"
+	condReady                = "Ready"
+	reasonCredentialNotFound = "CredentialNotFound"
+	reasonCredentialFound    = "AppInstallationFound"
+	reasonReconciling        = "Reconciling"
+)
 
-// +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories,verbs=get;list;watch;create;update;patch;delete
+// GitRepositoryReconciler reconciles GitRepository objects.
+//
+// +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories/finalizers,verbs=update
-
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the GitRepository object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.24.1/pkg/reconcile
-func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
-
-	// TODO(user): your logic here
-
-	return ctrl.Result{}, nil
+type GitRepositoryReconciler struct {
+	client client.Client
 }
 
-// SetupWithManager sets up the controller with the Manager.
+// NewGitRepositoryReconciler creates a reconciler with the given client.
+func NewGitRepositoryReconciler(c client.Client) *GitRepositoryReconciler {
+	return &GitRepositoryReconciler{client: c}
+}
+
+// SetupWithManager registers the reconciler with the controller-runtime manager.
 func (r *GitRepositoryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.GitRepository{}).
-		Named("core-gitrepository").
 		Complete(r)
+}
+
+func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	gr := &corev1alpha1.GitRepository{}
+	if err := r.client.Get(ctx, req.NamespacedName, gr); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, fmt.Errorf("fetching GitRepository: %w", err)
+	}
+
+	patch := client.MergeFrom(gr.DeepCopy())
+
+	// Credential resolution is a placeholder until AppInstallation type lands (#538).
+	// Always returns false so CredentialResolved=False is set, giving users clear status feedback.
+	credResolved := false
+
+	if credResolved {
+		setCondition(&gr.Status.Conditions, metav1.Condition{
+			Type:               condCredentialResolved,
+			Status:             metav1.ConditionTrue,
+			Reason:             reasonCredentialFound,
+			Message:            fmt.Sprintf("%s %s resolved successfully.", gr.Spec.CredentialRef.Kind, gr.Spec.CredentialRef.Name),
+			ObservedGeneration: gr.Generation,
+		})
+		setCondition(&gr.Status.Conditions, metav1.Condition{
+			Type:               condReady,
+			Status:             metav1.ConditionTrue,
+			Reason:             "URLReachable",
+			Message:            "Repository is reachable and credentials are valid.",
+			ObservedGeneration: gr.Generation,
+		})
+	} else {
+		setCondition(&gr.Status.Conditions, metav1.Condition{
+			Type:               condCredentialResolved,
+			Status:             metav1.ConditionFalse,
+			Reason:             reasonCredentialNotFound,
+			Message:            fmt.Sprintf("%s %s not found in namespace %s.", gr.Spec.CredentialRef.Kind, gr.Spec.CredentialRef.Name, gr.Namespace),
+			ObservedGeneration: gr.Generation,
+		})
+		setCondition(&gr.Status.Conditions, metav1.Condition{
+			Type:               condReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             reasonReconciling,
+			Message:            "Waiting for credential to be resolved.",
+			ObservedGeneration: gr.Generation,
+		})
+	}
+
+	gr.Status.ObservedGeneration = gr.Generation
+
+	if err := r.client.Status().Patch(ctx, gr, patch); err != nil {
+		return ctrl.Result{}, fmt.Errorf("patching status: %w", err)
+	}
+
+	logger.Info("reconciled GitRepository", "name", req.Name, "credentialResolved", credResolved)
+	return ctrl.Result{}, nil
+}
+
+func setCondition(conditions *[]metav1.Condition, c metav1.Condition) {
+	if c.LastTransitionTime.IsZero() {
+		c.LastTransitionTime = metav1.Now()
+	}
+	meta.SetStatusCondition(conditions, c)
 }
