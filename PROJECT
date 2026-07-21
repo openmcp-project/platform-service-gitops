@@ -9,4 +9,14 @@ layout:
 multigroup: true
 projectName: platform-service-gitops
 repo: github.com/openmcp-project/platform-service-gitops
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: openmcp.cloud
+  group: core
+  kind: GitRepository
+  path: github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1
+  version: v1alpha1
 version: "3"
