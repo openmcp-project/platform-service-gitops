@@ -141,14 +141,20 @@ func (r *KustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, fmt.Errorf("reconciling Flux Kustomization: %w", err)
 	}
 
-	lastRevision := ""
+	// Mirror Flux Kustomization status back to our status.
+	ks.Status.LastAppliedRevision = fluxKs.Status.LastAppliedRevision
+
+	readyStatus := metav1.ConditionTrue
+	readyReason := reasonFluxKsCreated
+	readyMsg := "Flux Kustomization created and managed."
 	for _, c := range fluxKs.Status.Conditions {
-		if c.Type == "Ready" && c.Status == "True" {
-			lastRevision = fluxKs.Status.LastAppliedRevision
+		if c.Type == "Ready" {
+			readyStatus = metav1.ConditionStatus(c.Status)
+			readyReason = c.Reason
+			readyMsg = c.Message
 			break
 		}
 	}
-	ks.Status.LastAppliedRevision = lastRevision
 
 	meta.SetStatusCondition(&ks.Status.Conditions, metav1.Condition{
 		Type:               condSourceInvalid,
@@ -160,9 +166,9 @@ func (r *KustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	})
 	meta.SetStatusCondition(&ks.Status.Conditions, metav1.Condition{
 		Type:               condReady,
-		Status:             metav1.ConditionTrue,
-		Reason:             reasonFluxKsCreated,
-		Message:            "Flux Kustomization created and managed.",
+		Status:             readyStatus,
+		Reason:             readyReason,
+		Message:            readyMsg,
 		ObservedGeneration: ks.Generation,
 		LastTransitionTime: metav1.Now(),
 	})

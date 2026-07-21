@@ -165,6 +165,48 @@ var _ = Describe("KustomizationReconciler", func() {
 			Expect(readyCond.Status).To(Equal(metav1.ConditionTrue))
 		})
 
+		It("mirrors Flux Ready=False condition when Flux reports an error", func() {
+			ks := newKustomization()
+			gr := newGitRepository()
+			fluxKs := &kustomizev1.Kustomization{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+				Status: kustomizev1.KustomizationStatus{
+					Conditions: []metav1.Condition{
+						{
+							Type:               "Ready",
+							Status:             metav1.ConditionFalse,
+							Reason:             "ReconciliationFailed",
+							Message:            "apply failed: some error",
+							LastTransitionTime: metav1.Now(),
+						},
+					},
+					LastAppliedRevision: "main@sha1:abc123",
+				},
+			}
+			cl := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithStatusSubresource(ks, fluxKs).
+				WithObjects(ks, gr, fluxKs).
+				Build()
+			r := controller.NewKustomizationReconciler(cl)
+
+			_, err := r.Reconcile(context.Background(), ctrl.Request{
+				NamespacedName: types.NamespacedName{Name: name, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			updated := &corev1alpha1.Kustomization{}
+			Expect(cl.Get(context.Background(),
+				types.NamespacedName{Name: name, Namespace: namespace},
+				updated)).To(Succeed())
+
+			readyCond := findCondition(updated.Status.Conditions, "Ready")
+			Expect(readyCond).NotTo(BeNil())
+			Expect(readyCond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(readyCond.Reason).To(Equal("ReconciliationFailed"))
+			Expect(readyCond.Message).To(Equal("apply failed: some error"))
+		})
+
 		It("does not recreate the Flux Kustomization if it already exists (idempotent)", func() {
 			ks := newKustomization()
 			gr := newGitRepository()
