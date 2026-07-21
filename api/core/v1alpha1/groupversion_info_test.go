@@ -3,8 +3,8 @@ package v1alpha1_test
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestGroupVersion_IsCorrect(t *testing.T) {
