@@ -39,7 +39,9 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	corev1alpha1 "github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1"
+	githubv1alpha1 "github.com/openmcp-project/platform-service-gitops/api/github/v1alpha1"
 	"github.com/openmcp-project/platform-service-gitops/internal/controller/core"
+	githubcontroller "github.com/openmcp-project/platform-service-gitops/internal/controller/github"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -52,6 +54,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(corev1alpha1.AddToScheme(scheme))
+	utilruntime.Must(githubv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(kustomizev1.AddToScheme(scheme))
 	utilruntime.Must(sourcev1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
@@ -66,6 +69,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var credentialNamespace string
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -84,6 +88,8 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&credentialNamespace, "credential-namespace", "platform-service-gitops-system",
+		"Default namespace for GitHub App credential Secrets referenced by GitHubInstance resources.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -183,8 +189,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := core.NewGitRepositoryReconciler(mgr.GetClient()).SetupWithManager(mgr); err != nil {
+	if err := core.NewGitRepositoryReconciler(mgr.GetClient(), credentialNamespace).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "core-gitrepository")
+		os.Exit(1)
+	}
+	ghInstance := githubcontroller.NewGitHubInstanceReconciler(mgr.GetClient(), credentialNamespace)
+	if err := ghInstance.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "github-githubinstance")
+		os.Exit(1)
+	}
+	appInstall := githubcontroller.NewAppInstallationReconciler(mgr.GetClient(), credentialNamespace)
+	if err := appInstall.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "github-appinstallation")
 		os.Exit(1)
 	}
 	if err := core.NewKustomizationReconciler(mgr.GetClient()).SetupWithManager(mgr); err != nil {

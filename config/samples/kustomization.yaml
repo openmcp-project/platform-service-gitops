@@ -2,4 +2,6 @@
 resources:
 - core_v1alpha1_gitrepository.yaml
 - core_v1alpha1_kustomization.yaml
+- github_v1alpha1_githubinstance.yaml
+- github_v1alpha1_appinstallation.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

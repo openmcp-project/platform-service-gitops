@@ -1,0 +1,24 @@
+# Platform owner: credential Secret + GitHubInstance.
+# The Secret holds the GitHub App credentials; the GitHubInstance (cluster-scoped)
+# references it. End users never see this Secret.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sap-ghe
+  namespace: platform-service-gitops-system
+stringData:
+  appID: "1436"
+  url: https://github.tools.sap        # public: https://github.com
+  privateKey: |
+    -----BEGIN RSA PRIVATE KEY-----
+    # ... the GitHub App private key (.pem) ...
+    -----END RSA PRIVATE KEY-----
+---
+apiVersion: github.gitops.open-control-plane.io/v1alpha1
+kind: GitHubInstance
+metadata:
+  name: sap-ghe               # matches the Secret name in secretRefs
+spec:
+  secretRefs:
+    - name: sap-ghe
+      # namespace defaults to the controller's --credential-namespace when omitted

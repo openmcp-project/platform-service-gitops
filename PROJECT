@@ -19,4 +19,21 @@ resources:
   kind: GitRepository
   path: github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+  controller: true
+  domain: openmcp.cloud
+  group: github
+  kind: GitHubInstance
+  path: github.com/openmcp-project/platform-service-gitops/api/github/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: openmcp.cloud
+  group: github
+  kind: AppInstallation
+  path: github.com/openmcp-project/platform-service-gitops/api/github/v1alpha1
+  version: v1alpha1
 version: "3"
