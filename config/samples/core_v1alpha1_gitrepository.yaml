@@ -1,9 +1,17 @@
 apiVersion: gitops.open-control-plane.io/v1alpha1
 kind: GitRepository
 metadata:
-  labels:
-    app.kubernetes.io/name: platform-service-gitops
-    app.kubernetes.io/managed-by: kustomize
-  name: gitrepository-sample
+  name: my-infra
+  namespace: default
 spec:
-  # TODO(user): Add fields here
+  url: https://github.com/my-org/my-infra
+  ref:
+    branch: main
+  path: ./
+  credentialRef:
+    name: my-github-connection
+    kind: AppInstallation
+    group: github.gitops.open-control-plane.io
+  propagateTo:
+    - kind: ControlPlane
+      name: my-mcp-prod
