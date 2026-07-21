@@ -1,4 +1,4 @@
-apiVersion: core.openmcp.cloud/v1alpha1
+apiVersion: gitops.open-control-plane.io/v1alpha1
 kind: GitRepository
 metadata:
   labels:
