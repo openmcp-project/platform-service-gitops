@@ -144,7 +144,7 @@ func (r *KustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	readyMsg := "Flux Kustomization created and managed."
 	for _, c := range fluxKs.Status.Conditions {
 		if c.Type == condReady {
-			readyStatus = metav1.ConditionStatus(c.Status)
+			readyStatus = c.Status
 			readyReason = c.Reason
 			readyMsg = c.Message
 			break
