@@ -9,7 +9,6 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -64,21 +63,19 @@ func (r *KustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	patch := client.MergeFrom(ks.DeepCopy())
 
 	if ks.Spec.SourceRef.Kind != "GitRepository" {
-		meta.SetStatusCondition(&ks.Status.Conditions, metav1.Condition{
+		setCondition(&ks.Status.Conditions, metav1.Condition{
 			Type:               condSourceInvalid,
 			Status:             metav1.ConditionTrue,
 			Reason:             reasonInvalidSourceKind,
 			Message:            fmt.Sprintf("sourceRef.kind %q is not supported; only GitRepository is allowed.", ks.Spec.SourceRef.Kind),
 			ObservedGeneration: ks.Generation,
-			LastTransitionTime: metav1.Now(),
 		})
-		meta.SetStatusCondition(&ks.Status.Conditions, metav1.Condition{
+		setCondition(&ks.Status.Conditions, metav1.Condition{
 			Type:               condReady,
 			Status:             metav1.ConditionFalse,
 			Reason:             reasonInvalidSourceKind,
 			Message:            "Invalid sourceRef kind.",
 			ObservedGeneration: ks.Generation,
-			LastTransitionTime: metav1.Now(),
 		})
 		ks.Status.ObservedGeneration = ks.Generation
 		if err := r.client.Status().Patch(ctx, ks, patch); err != nil {
@@ -92,21 +89,19 @@ func (r *KustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, fmt.Errorf("fetching GitRepository: %w", err)
 		}
-		meta.SetStatusCondition(&ks.Status.Conditions, metav1.Condition{
+		setCondition(&ks.Status.Conditions, metav1.Condition{
 			Type:               condSourceInvalid,
 			Status:             metav1.ConditionTrue,
 			Reason:             reasonGitRepositoryNotFound,
 			Message:            fmt.Sprintf("GitRepository %q not found in namespace %q.", ks.Spec.SourceRef.Name, ks.Namespace),
 			ObservedGeneration: ks.Generation,
-			LastTransitionTime: metav1.Now(),
 		})
-		meta.SetStatusCondition(&ks.Status.Conditions, metav1.Condition{
+		setCondition(&ks.Status.Conditions, metav1.Condition{
 			Type:               condReady,
 			Status:             metav1.ConditionFalse,
 			Reason:             reasonGitRepositoryNotFound,
 			Message:            "Waiting for referenced GitRepository to exist.",
 			ObservedGeneration: ks.Generation,
-			LastTransitionTime: metav1.Now(),
 		})
 		ks.Status.ObservedGeneration = ks.Generation
 		if err := r.client.Status().Patch(ctx, ks, patch); err != nil {
@@ -121,11 +116,11 @@ func (r *KustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			Namespace: ks.Namespace,
 		},
 	}
-	if err := controllerutil.SetControllerReference(ks, fluxKs, r.client.Scheme()); err != nil {
-		return ctrl.Result{}, fmt.Errorf("setting owner reference: %w", err)
-	}
 
 	if _, err := controllerutil.CreateOrUpdate(ctx, r.client, fluxKs, func() error {
+		if err := controllerutil.SetControllerReference(ks, fluxKs, r.client.Scheme()); err != nil {
+			return fmt.Errorf("setting owner reference: %w", err)
+		}
 		fluxKs.Spec = kustomizev1.KustomizationSpec{
 			Interval: ks.Spec.Interval,
 			Path:     ks.Spec.Path,
@@ -148,7 +143,7 @@ func (r *KustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	readyReason := reasonFluxKsCreated
 	readyMsg := "Flux Kustomization created and managed."
 	for _, c := range fluxKs.Status.Conditions {
-		if c.Type == "Ready" {
+		if c.Type == condReady {
 			readyStatus = metav1.ConditionStatus(c.Status)
 			readyReason = c.Reason
 			readyMsg = c.Message
@@ -156,21 +151,19 @@ func (r *KustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 
-	meta.SetStatusCondition(&ks.Status.Conditions, metav1.Condition{
+	setCondition(&ks.Status.Conditions, metav1.Condition{
 		Type:               condSourceInvalid,
 		Status:             metav1.ConditionFalse,
 		Reason:             reasonGitRepositoryFound,
 		Message:            fmt.Sprintf("GitRepository %q found.", ks.Spec.SourceRef.Name),
 		ObservedGeneration: ks.Generation,
-		LastTransitionTime: metav1.Now(),
 	})
-	meta.SetStatusCondition(&ks.Status.Conditions, metav1.Condition{
+	setCondition(&ks.Status.Conditions, metav1.Condition{
 		Type:               condReady,
 		Status:             readyStatus,
 		Reason:             readyReason,
 		Message:            readyMsg,
 		ObservedGeneration: ks.Generation,
-		LastTransitionTime: metav1.Now(),
 	})
 	ks.Status.ObservedGeneration = ks.Generation
 
