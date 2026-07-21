@@ -3,6 +3,7 @@ module github.com/openmcp-project/platform-service-gitops
 go 1.26.0
 
 require (
+	github.com/fluxcd/kustomize-controller/api v1.9.3
 	github.com/onsi/ginkgo/v2 v2.27.4
 	github.com/onsi/gomega v1.39.0
 	github.com/stretchr/testify v1.11.1
@@ -13,7 +14,7 @@ require (
 
 require (
 	cel.dev/expr v0.25.1 // indirect
-	github.com/Masterminds/semver/v3 v3.4.0 // indirect
+	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
@@ -23,6 +24,8 @@ require (
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
 	github.com/evanphx/json-patch/v5 v5.9.11 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/fluxcd/pkg/apis/kustomize v1.19.1 // indirect
+	github.com/fluxcd/pkg/apis/meta v1.30.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect

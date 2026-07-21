@@ -6,6 +6,7 @@ package core_test
 import (
 	"testing"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -23,4 +24,5 @@ func TestControllers(t *testing.T) {
 var _ = BeforeSuite(func() {
 	scheme = runtime.NewScheme()
 	Expect(corev1alpha1.AddToScheme(scheme)).To(Succeed())
+	Expect(kustomizev1.AddToScheme(scheme)).To(Succeed())
 })
