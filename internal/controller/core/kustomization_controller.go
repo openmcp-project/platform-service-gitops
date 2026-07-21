@@ -8,13 +8,16 @@ import (
 	"fmt"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1alpha1 "github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1"
 )
@@ -32,6 +35,7 @@ const (
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=kustomizations,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=kustomizations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kustomize.toolkit.fluxcd.io,resources=kustomizations,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=source.toolkit.fluxcd.io,resources=gitrepositories,verbs=get;list;watch;create;update;patch;delete
 type KustomizationReconciler struct {
 	client client.Client
 }
@@ -46,6 +50,23 @@ func (r *KustomizationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.Kustomization{}).
 		Owns(&kustomizev1.Kustomization{}).
+		Watches(&corev1alpha1.GitRepository{}, handler.EnqueueRequestsFromMapFunc(
+			func(ctx context.Context, obj client.Object) []reconcile.Request {
+				ksList := &corev1alpha1.KustomizationList{}
+				if err := r.client.List(ctx, ksList, client.InNamespace(obj.GetNamespace())); err != nil {
+					return nil
+				}
+				var reqs []reconcile.Request
+				for _, ks := range ksList.Items {
+					if ks.Spec.SourceRef.Kind == "GitRepository" && ks.Spec.SourceRef.Name == obj.GetName() {
+						reqs = append(reqs, reconcile.Request{
+							NamespacedName: types.NamespacedName{Name: ks.Name, Namespace: ks.Namespace},
+						})
+					}
+				}
+				return reqs
+			},
+		)).
 		Complete(r)
 }
 
@@ -110,6 +131,34 @@ func (r *KustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
+	// Create/update a Flux source GitRepository mirroring the openmcp GitRepository.
+	// The Flux Kustomization must point to source.toolkit.fluxcd.io/v1 GitRepository,
+	// not to our openmcp type, since Flux only resolves its own source kinds.
+	fluxGR := &sourcev1.GitRepository{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      gr.Name,
+			Namespace: gr.Namespace,
+		},
+	}
+	if _, err := controllerutil.CreateOrUpdate(ctx, r.client, fluxGR, func() error {
+		if err := controllerutil.SetControllerReference(gr, fluxGR, r.client.Scheme()); err != nil {
+			return fmt.Errorf("setting owner reference on Flux GitRepository: %w", err)
+		}
+		ref := &sourcev1.GitRepositoryRef{
+			Branch: gr.Spec.Ref.Branch,
+			Tag:    gr.Spec.Ref.Tag,
+			Commit: gr.Spec.Ref.Commit,
+		}
+		fluxGR.Spec = sourcev1.GitRepositorySpec{
+			URL:       gr.Spec.URL,
+			Interval:  ks.Spec.Interval,
+			Reference: ref,
+		}
+		return nil
+	}); err != nil {
+		return ctrl.Result{}, fmt.Errorf("reconciling Flux GitRepository: %w", err)
+	}
+
 	fluxKs := &kustomizev1.Kustomization{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ks.Name,
@@ -126,9 +175,10 @@ func (r *KustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			Path:     ks.Spec.Path,
 			Prune:    ks.Spec.Prune,
 			SourceRef: kustomizev1.CrossNamespaceSourceReference{
-				Kind:      "GitRepository",
-				Name:      ks.Spec.SourceRef.Name,
-				Namespace: ks.Namespace,
+				APIVersion: sourcev1.GroupVersion.String(),
+				Kind:       sourcev1.GitRepositoryKind,
+				Name:       gr.Name,
+				Namespace:  gr.Namespace,
 			},
 		}
 		return nil
@@ -139,9 +189,9 @@ func (r *KustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Mirror Flux Kustomization status back to our status.
 	ks.Status.LastAppliedRevision = fluxKs.Status.LastAppliedRevision
 
-	readyStatus := metav1.ConditionTrue
+	readyStatus := metav1.ConditionUnknown
 	readyReason := reasonFluxKsCreated
-	readyMsg := "Flux Kustomization created and managed."
+	readyMsg := "Flux Kustomization created; waiting for Flux to reconcile."
 	for _, c := range fluxKs.Status.Conditions {
 		if c.Type == condReady {
 			readyStatus = c.Status

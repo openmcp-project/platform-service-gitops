@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
 	corev1alpha1 "github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1"
 	"github.com/openmcp-project/platform-service-gitops/internal/controller/core"
@@ -52,6 +53,7 @@ func init() {
 
 	utilruntime.Must(corev1alpha1.AddToScheme(scheme))
 	utilruntime.Must(kustomizev1.AddToScheme(scheme))
+	utilruntime.Must(sourcev1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 

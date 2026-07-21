@@ -126,6 +126,7 @@ var _ = Describe("KustomizationReconciler", func() {
 			Expect(fluxKs.Spec.Path).To(Equal("./projects/my-project"))
 			Expect(fluxKs.Spec.Interval.Duration).To(Equal(5 * time.Minute))
 			Expect(fluxKs.Spec.Prune).To(BeTrue())
+			Expect(fluxKs.Spec.SourceRef.APIVersion).To(Equal("source.toolkit.fluxcd.io/v1"))
 			Expect(fluxKs.Spec.SourceRef.Kind).To(Equal("GitRepository"))
 			Expect(fluxKs.Spec.SourceRef.Name).To(Equal(srcName))
 			Expect(fluxKs.Spec.SourceRef.Namespace).To(Equal(namespace))
@@ -135,7 +136,7 @@ var _ = Describe("KustomizationReconciler", func() {
 			Expect(fluxKs.OwnerReferences[0].Name).To(Equal(name))
 		})
 
-		It("sets SourceInvalid=False and Ready=True", func() {
+		It("sets SourceInvalid=False and Ready=Unknown while Flux reconciles", func() {
 			ks := newKustomization()
 			gr := newGitRepository()
 			cl := fake.NewClientBuilder().
@@ -162,7 +163,7 @@ var _ = Describe("KustomizationReconciler", func() {
 
 			readyCond := findCondition(updated.Status.Conditions, "Ready")
 			Expect(readyCond).NotTo(BeNil())
-			Expect(readyCond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(readyCond.Status).To(Equal(metav1.ConditionUnknown))
 		})
 
 		It("mirrors Flux Ready=False condition when Flux reports an error", func() {

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -25,4 +26,5 @@ var _ = BeforeSuite(func() {
 	scheme = runtime.NewScheme()
 	Expect(corev1alpha1.AddToScheme(scheme)).To(Succeed())
 	Expect(kustomizev1.AddToScheme(scheme)).To(Succeed())
+	Expect(sourcev1.AddToScheme(scheme)).To(Succeed())
 })
