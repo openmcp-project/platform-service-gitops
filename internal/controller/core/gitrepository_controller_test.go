@@ -18,6 +18,11 @@ import (
 )
 
 var _ = Describe("GitRepositoryReconciler", func() {
+	const (
+		grName      = "my-infra"
+		grNamespace = "my-project"
+	)
+
 	Context("when the GitRepository does not exist", func() {
 		It("returns no error", func() {
 			cl := fake.NewClientBuilder().WithScheme(scheme).Build()
@@ -35,7 +40,7 @@ var _ = Describe("GitRepositoryReconciler", func() {
 	Context("when a new GitRepository references a missing credential", func() {
 		It("sets CredentialResolved=False and Ready=False", func() {
 			gr := &corev1alpha1.GitRepository{
-				ObjectMeta: metav1.ObjectMeta{Name: "my-infra", Namespace: "my-project"},
+				ObjectMeta: metav1.ObjectMeta{Name: grName, Namespace: grNamespace},
 				Spec: corev1alpha1.GitRepositorySpec{
 					URL: "https://github.com/my-org/my-infra",
 					Ref: corev1alpha1.GitRef{Branch: "main"},
@@ -54,13 +59,13 @@ var _ = Describe("GitRepositoryReconciler", func() {
 			r := controller.NewGitRepositoryReconciler(cl)
 
 			_, err := r.Reconcile(context.Background(), ctrl.Request{
-				NamespacedName: types.NamespacedName{Name: "my-infra", Namespace: "my-project"},
+				NamespacedName: types.NamespacedName{Name: grName, Namespace: grNamespace},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
 			updated := &corev1alpha1.GitRepository{}
 			Expect(cl.Get(context.Background(),
-				types.NamespacedName{Name: "my-infra", Namespace: "my-project"},
+				types.NamespacedName{Name: grName, Namespace: grNamespace},
 				updated)).To(Succeed())
 
 			credCond := findCondition(updated.Status.Conditions, "CredentialResolved")
