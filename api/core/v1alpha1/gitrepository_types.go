@@ -1,18 +1,5 @@
-/*
-Copyright 2026.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// SPDX-FileCopyrightText: 2026 SAP SE or an SAP affiliate company and Open Control Plane contributors
+// SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
 
@@ -20,70 +7,102 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// GitRepositorySpec defines the desired state of GitRepository
-type GitRepositorySpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of GitRepository. Edit gitrepository_types.go to remove/update
+// GitRef specifies which revision of a repository to use.
+type GitRef struct {
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	Branch string `json:"branch,omitempty"`
+	// +optional
+	Tag string `json:"tag,omitempty"`
+	// +optional
+	Commit string `json:"commit,omitempty"`
+}
+
+// CredentialRef identifies the credential provider. Mirrors cert-manager's issuerRef pattern.
+type CredentialRef struct {
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+	// +kubebuilder:validation:Required
+	Kind string `json:"kind"`
+	// +kubebuilder:default=""
+	// +optional
+	Group string `json:"group,omitempty"`
+}
+
+// PropagateTarget declares a ControlPlane that should receive scoped repository access.
+type PropagateTarget struct {
+	// Kind of target. Currently only ControlPlane is supported.
+	// +kubebuilder:validation:Required
+	Kind string `json:"kind"`
+	// +optional
+	Name string `json:"name,omitempty"`
+	// +optional
+	MatchLabels map[string]string `json:"matchLabels,omitempty"`
+}
+
+// GitRepositorySpec defines the desired state of GitRepository.
+type GitRepositorySpec struct {
+	// URL is the HTTPS URL of the Git repository.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^https?://.*`
+	URL string `json:"url"`
+
+	// Ref specifies the branch, tag, or commit to track.
+	// +kubebuilder:validation:Required
+	Ref GitRef `json:"ref"`
+
+	// Path within the repository to use as the source root.
+	// +kubebuilder:default="./"
+	// +optional
+	Path string `json:"path,omitempty"`
+
+	// CredentialRef references the credential provider for repository access.
+	// +kubebuilder:validation:Required
+	CredentialRef CredentialRef `json:"credentialRef"`
+
+	// PropagateToControlPlanes lists ControlPlanes that should receive a
+	// scoped token and a Flux GitRepository resource for this source.
+	// Behaviour implemented in a follow-up issue.
+	// +optional
+	PropagateToControlPlanes []PropagateTarget `json:"propagateTo,omitempty"`
 }
 
 // GitRepositoryStatus defines the observed state of GitRepository.
 type GitRepositoryStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// ObservedGeneration is the .metadata.generation this status was computed from.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the GitRepository resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// Conditions summarise the current state.
+	// Known types: Ready, CredentialResolved.
+	// +optional
 	// +listType=map
 	// +listMapKey=type
-	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Namespaced,categories={gitops,openmcp}
+// +kubebuilder:printcolumn:name="URL",type="string",JSONPath=".spec.url"
+// +kubebuilder:printcolumn:name="BRANCH",type="string",JSONPath=".spec.ref.branch"
+// +kubebuilder:printcolumn:name="READY",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
+// +kubebuilder:printcolumn:name="AGE",type="date",JSONPath=".metadata.creationTimestamp"
 
-// GitRepository is the Schema for the gitrepositories API
+// GitRepository is the Schema for the gitrepositories API.
 type GitRepository struct {
-	metav1.TypeMeta `json:",inline"`
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	// metadata is a standard object metadata
-	// +optional
-	metav1.ObjectMeta `json:"metadata,omitzero"`
-
-	// spec defines the desired state of GitRepository
-	// +required
-	Spec GitRepositorySpec `json:"spec"`
-
-	// status defines the observed state of GitRepository
-	// +optional
-	Status GitRepositoryStatus `json:"status,omitzero"`
+	Spec   GitRepositorySpec   `json:"spec,omitempty"`
+	Status GitRepositoryStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// GitRepositoryList contains a list of GitRepository
+// GitRepositoryList contains a list of GitRepository.
 type GitRepositoryList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitzero"`
+	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []GitRepository `json:"items"`
 }
 
