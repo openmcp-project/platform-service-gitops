@@ -1,0 +1,194 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: gitrepositories.gitops.open-control-plane.io
+spec:
+  group: gitops.open-control-plane.io
+  names:
+    categories:
+    - gitops
+    - openmcp
+    kind: GitRepository
+    listKind: GitRepositoryList
+    plural: gitrepositories
+    singular: gitrepository
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.url
+      name: URL
+      type: string
+    - jsonPath: .spec.ref.branch
+      name: BRANCH
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: READY
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: GitRepository is the Schema for the gitrepositories API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: GitRepositorySpec defines the desired state of GitRepository.
+            properties:
+              credentialRef:
+                description: CredentialRef references the credential provider for
+                  repository access.
+                properties:
+                  group:
+                    default: ""
+                    type: string
+                  kind:
+                    type: string
+                  name:
+                    type: string
+                required:
+                - kind
+                - name
+                type: object
+              path:
+                default: ./
+                description: Path within the repository to use as the source root.
+                type: string
+              propagateTo:
+                description: |-
+                  PropagateToControlPlanes lists ControlPlanes that should receive a
+                  scoped token and a Flux GitRepository resource for this source.
+                  Behaviour implemented in a follow-up issue.
+                items:
+                  description: PropagateTarget declares a ControlPlane that should
+                    receive scoped repository access.
+                  properties:
+                    kind:
+                      description: Kind of target. Currently only ControlPlane is
+                        supported.
+                      type: string
+                    matchLabels:
+                      additionalProperties:
+                        type: string
+                      type: object
+                    name:
+                      type: string
+                  required:
+                  - kind
+                  type: object
+                type: array
+              ref:
+                description: Ref specifies the branch, tag, or commit to track.
+                properties:
+                  branch:
+                    type: string
+                  commit:
+                    type: string
+                  tag:
+                    type: string
+                type: object
+              url:
+                description: URL is the HTTPS URL of the Git repository.
+                pattern: ^https?://.*
+                type: string
+            required:
+            - credentialRef
+            - ref
+            - url
+            type: object
+          status:
+            description: GitRepositoryStatus defines the observed state of GitRepository.
+            properties:
+              conditions:
+                description: |-
+                  Conditions summarise the current state.
+                  Known types: Ready, CredentialResolved.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                description: ObservedGeneration is the .metadata.generation this status
+                  was computed from.
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

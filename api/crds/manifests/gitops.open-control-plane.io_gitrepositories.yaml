@@ -4,20 +4,36 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: gitrepositories.core.openmcp.cloud
+  name: gitrepositories.gitops.open-control-plane.io
 spec:
-  group: core.openmcp.cloud
+  group: gitops.open-control-plane.io
   names:
+    categories:
+    - gitops
+    - openmcp
     kind: GitRepository
     listKind: GitRepositoryList
     plural: gitrepositories
     singular: gitrepository
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.url
+      name: URL
+      type: string
+    - jsonPath: .spec.ref.branch
+      name: BRANCH
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: READY
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: GitRepository is the Schema for the gitrepositories API
+        description: GitRepository is the Schema for the gitrepositories API.
         properties:
           apiVersion:
             description: |-
@@ -37,27 +53,76 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of GitRepository
+            description: GitRepositorySpec defines the desired state of GitRepository.
             properties:
-              foo:
-                description: foo is an example field of GitRepository. Edit gitrepository_types.go
-                  to remove/update
+              credentialRef:
+                description: CredentialRef references the credential provider for
+                  repository access.
+                properties:
+                  group:
+                    default: ""
+                    type: string
+                  kind:
+                    type: string
+                  name:
+                    type: string
+                required:
+                - kind
+                - name
+                type: object
+              path:
+                default: ./
+                description: Path within the repository to use as the source root.
                 type: string
+              propagateTo:
+                description: |-
+                  PropagateToControlPlanes lists ControlPlanes that should receive a
+                  scoped token and a Flux GitRepository resource for this source.
+                  Behaviour implemented in a follow-up issue.
+                items:
+                  description: PropagateTarget declares a ControlPlane that should
+                    receive scoped repository access.
+                  properties:
+                    kind:
+                      description: Kind of target. Currently only ControlPlane is
+                        supported.
+                      type: string
+                    matchLabels:
+                      additionalProperties:
+                        type: string
+                      type: object
+                    name:
+                      type: string
+                  required:
+                  - kind
+                  type: object
+                type: array
+              ref:
+                description: Ref specifies the branch, tag, or commit to track.
+                properties:
+                  branch:
+                    type: string
+                  commit:
+                    type: string
+                  tag:
+                    type: string
+                type: object
+              url:
+                description: URL is the HTTPS URL of the Git repository.
+                pattern: ^https?://.*
+                type: string
+            required:
+            - credentialRef
+            - ref
+            - url
             type: object
           status:
-            description: status defines the observed state of GitRepository
+            description: GitRepositoryStatus defines the observed state of GitRepository.
             properties:
               conditions:
                 description: |-
-                  conditions represent the current state of the GitRepository resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                  Conditions summarise the current state.
+                  Known types: Ready, CredentialResolved.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -116,9 +181,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              observedGeneration:
+                description: ObservedGeneration is the .metadata.generation this status
+                  was computed from.
+                format: int64
+                type: integer
             type: object
-        required:
-        - spec
         type: object
     served: true
     storage: true
