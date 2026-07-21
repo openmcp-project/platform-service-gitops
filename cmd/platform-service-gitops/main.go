@@ -36,7 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	corev1alpha1 "github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1"
-	corecontroller "github.com/openmcp-project/platform-service-gitops/internal/controller/core"
+	"github.com/openmcp-project/platform-service-gitops/internal/controller/core"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -178,7 +178,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := corecontroller.NewGitRepositoryReconciler(mgr.GetClient()).SetupWithManager(mgr); err != nil {
+	if err := core.NewGitRepositoryReconciler(mgr.GetClient()).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "core-gitrepository")
 		os.Exit(1)
 	}

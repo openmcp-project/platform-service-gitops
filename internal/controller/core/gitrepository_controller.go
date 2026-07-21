@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 SAP SE or an SAP affiliate company and Open Control Plane contributors
 // SPDX-License-Identifier: Apache-2.0
 
-package controller
+package core
 
 import (
 	"context"
@@ -23,13 +23,13 @@ const (
 	reasonCredentialNotFound = "CredentialNotFound"
 	reasonCredentialFound    = "AppInstallationFound"
 	reasonReconciling        = "Reconciling"
+	reasonURLReachable       = "URLReachable"
 )
 
 // GitRepositoryReconciler reconciles GitRepository objects.
 //
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories/finalizers,verbs=update
 type GitRepositoryReconciler struct {
 	client client.Client
 }
@@ -74,7 +74,7 @@ func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		setCondition(&gr.Status.Conditions, metav1.Condition{
 			Type:               condReady,
 			Status:             metav1.ConditionTrue,
-			Reason:             "URLReachable",
+			Reason:             reasonURLReachable,
 			Message:            "Repository is reachable and credentials are valid.",
 			ObservedGeneration: gr.Generation,
 		})
