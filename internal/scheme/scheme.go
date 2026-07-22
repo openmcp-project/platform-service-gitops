@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	clustersv1alpha1 "github.com/openmcp-project/openmcp-operator/api/clusters/v1alpha1"
@@ -39,12 +40,14 @@ func init() {
 
 func initPlatform() {
 	utilruntime.Must(clientgoscheme.AddToScheme(Platform))
+	utilruntime.Must(apiextv1.AddToScheme(Platform))
 	utilruntime.Must(clustersv1alpha1.AddToScheme(Platform))
 	utilruntime.Must(githubv1alpha1.AddToScheme(Platform))
 }
 
 func initOnboarding() {
 	utilruntime.Must(clientgoscheme.AddToScheme(Onboarding))
+	utilruntime.Must(apiextv1.AddToScheme(Onboarding))
 	utilruntime.Must(corev1alpha1.AddToScheme(Onboarding))
 	utilruntime.Must(githubv1alpha1.AddToScheme(Onboarding))
 	utilruntime.Must(corev2alpha1.AddToScheme(Onboarding))
