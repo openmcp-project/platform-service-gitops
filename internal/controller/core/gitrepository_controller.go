@@ -76,6 +76,7 @@ type GitRepositoryReconciler struct {
 	credentialNamespace string
 	newClient           func(githubapp.Credentials) (TokenMinter, error)
 	mcpResolver         MCPClientResolver
+	resolveCredentials  func(ctx context.Context, ai *githubv1alpha1.AppInstallation) (githubapp.Credentials, error)
 }
 
 // NewGitRepositoryReconciler creates a reconciler with the given client and
@@ -91,6 +92,9 @@ func NewGitRepositoryReconciler(c client.Client, credentialNamespace string) *Gi
 	r.mcpResolver = mcpClientResolverFunc(func(ctx context.Context, ns, name string) (client.Client, error) {
 		return mcpclient.Resolve(ctx, c, ns, name)
 	})
+	r.resolveCredentials = func(ctx context.Context, ai *githubv1alpha1.AppInstallation) (githubapp.Credentials, error) {
+		return credentials.Resolve(ctx, c, ai.Spec.InstanceRef.Name, ai.Spec.CredentialName, credentialNamespace)
+	}
 	return r
 }
 
@@ -103,6 +107,11 @@ func (r *GitRepositoryReconciler) SetTokenMinterFactory(f func(githubapp.Credent
 // SetMCPClientResolver replaces the MCPClientResolver. Intended for testing only.
 func (r *GitRepositoryReconciler) SetMCPClientResolver(res MCPClientResolver) {
 	r.mcpResolver = res
+}
+
+// SetCredentialResolver replaces the credential resolution function. Intended for testing only.
+func (r *GitRepositoryReconciler) SetCredentialResolver(f func(ctx context.Context, ai *githubv1alpha1.AppInstallation) (githubapp.Credentials, error)) {
+	r.resolveCredentials = f
 }
 
 // SetupWithManager registers the reconciler with the controller-runtime manager.
@@ -165,7 +174,7 @@ func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	var requeueAfter time.Duration
-	if resolved && len(gr.Spec.PropagateToControlPlanes) > 0 {
+	if resolved && (len(gr.Spec.PropagateToControlPlanes) > 0 || len(gr.Status.PropagateStatus) > 0) {
 		nextRotation, err := r.syncTokens(ctx, gr, installationID)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -330,7 +339,7 @@ func (r *GitRepositoryReconciler) syncOneMCP(
 		}
 	}
 
-	creds, err := credentials.Resolve(ctx, r.client, ai.Spec.InstanceRef.Name, ai.Spec.CredentialName, r.credentialNamespace)
+	creds, err := r.resolveCredentials(ctx, ai)
 	if err != nil {
 		return corev1alpha1.MCPPropagateState{
 			Name:    target.Name,

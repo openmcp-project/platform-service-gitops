@@ -5,10 +5,15 @@ package core_test
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -17,6 +22,7 @@ import (
 	corev1alpha1 "github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1"
 	githubv1alpha1 "github.com/openmcp-project/platform-service-gitops/api/github/v1alpha1"
 	controller "github.com/openmcp-project/platform-service-gitops/internal/controller/core"
+	githubapp "github.com/openmcp-project/platform-service-gitops/internal/githubapp"
 )
 
 const (
@@ -69,7 +75,95 @@ func reconcileGR(objs []client.Object) *corev1alpha1.GitRepository {
 		}
 	}
 	cl := b.Build()
-	r := controller.NewGitRepositoryReconciler(cl)
+	r := controller.NewGitRepositoryReconciler(cl, "platform-service-gitops-system")
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: grName, Namespace: grNamespace},
+	})
+	Expect(err).NotTo(HaveOccurred())
+
+	out := &corev1alpha1.GitRepository{}
+	Expect(cl.Get(context.Background(), types.NamespacedName{Name: grName, Namespace: grNamespace}, out)).To(Succeed())
+	return out
+}
+
+// fakeMCPResolver returns a pre-built fake client for named MCPs.
+type fakeMCPResolver struct {
+	clients map[string]client.Client
+}
+
+func (f *fakeMCPResolver) Resolve(_ context.Context, _, mcpName string) (client.Client, error) {
+	cl, ok := f.clients[mcpName]
+	if !ok {
+		return nil, fmt.Errorf("kubeconfig Secret for MCP %q not found", mcpName)
+	}
+	return cl, nil
+}
+
+// fakeMinter records call count and returns a configured token.
+type fakeMinter struct {
+	token     string
+	callCount int
+	err       error
+}
+
+func (f *fakeMinter) MintInstallationToken(_ context.Context, _ int64) (string, error) {
+	f.callCount++
+	return f.token, f.err
+}
+
+func newMCPFakeClient() client.Client {
+	sc := runtime.NewScheme()
+	_ = corev1.AddToScheme(sc)
+	return fake.NewClientBuilder().WithScheme(sc).Build()
+}
+
+func gitRepoWithPropagate(mcpNames ...string) *corev1alpha1.GitRepository {
+	gr := gitRepo("my-connection")
+	for _, n := range mcpNames {
+		gr.Spec.PropagateToControlPlanes = append(gr.Spec.PropagateToControlPlanes,
+			corev1alpha1.PropagateTarget{Kind: "ControlPlane", Name: n})
+	}
+	return gr
+}
+
+func reconcileGRWithMCPResolver(
+	objs []client.Object,
+	resolver controller.MCPClientResolver,
+	minter *fakeMinter,
+) *corev1alpha1.GitRepository {
+	b := fake.NewClientBuilder().WithScheme(scheme)
+	for _, o := range objs {
+		switch v := o.(type) {
+		case *corev1alpha1.GitRepository:
+			b = b.WithObjects(v).WithStatusSubresource(v)
+		case *githubv1alpha1.AppInstallation:
+			b = b.WithObjects(v).WithStatusSubresource(v)
+		default:
+			b = b.WithObjects(v)
+		}
+	}
+	cl := b.Build()
+
+	// Seed status separately since WithObjects doesn't set status subresource fields
+	for _, o := range objs {
+		if gr, ok := o.(*corev1alpha1.GitRepository); ok && len(gr.Status.PropagateStatus) > 0 {
+			if err := cl.Status().Update(context.Background(), gr); err != nil {
+				Expect(err).NotTo(HaveOccurred())
+			}
+		}
+	}
+
+	r := controller.NewGitRepositoryReconciler(cl, "platform-service-gitops-system")
+	r.SetMCPClientResolver(resolver)
+	// Bypass GitHubInstance + Secret lookup — credentials are not exercised in these tests.
+	r.SetCredentialResolver(func(_ context.Context, _ *githubv1alpha1.AppInstallation) (githubapp.Credentials, error) {
+		return githubapp.Credentials{}, nil
+	})
+	if minter != nil {
+		r.SetTokenMinterFactory(func(_ githubapp.Credentials) (controller.TokenMinter, error) {
+			return minter, nil
+		})
+	}
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: grName, Namespace: grNamespace},
 	})
@@ -84,7 +178,7 @@ var _ = Describe("GitRepositoryReconciler", func() {
 	Context("when the GitRepository does not exist", func() {
 		It("returns no error", func() {
 			cl := fake.NewClientBuilder().WithScheme(scheme).Build()
-			r := controller.NewGitRepositoryReconciler(cl)
+			r := controller.NewGitRepositoryReconciler(cl, "platform-service-gitops-system")
 			result, err := r.Reconcile(context.Background(), ctrl.Request{
 				NamespacedName: types.NamespacedName{Name: "nope", Namespace: grNamespace},
 			})
@@ -124,6 +218,128 @@ var _ = Describe("GitRepositoryReconciler", func() {
 			Expect(cred.Reason).To(Equal("CredentialResolved"))
 			ready := findCondition(out.Status.Conditions, "Ready")
 			Expect(ready.Status).To(Equal(metav1.ConditionTrue))
+		})
+	})
+
+	Context("token sync via propagateTo", func() {
+		It("writes a BasicAuth Secret into the MCP cluster", func() {
+			minter := &fakeMinter{token: "ghs_test_token"}
+			mcpFake := newMCPFakeClient()
+			resolver := &fakeMCPResolver{clients: map[string]client.Client{"my-mcp": mcpFake}}
+
+			out := reconcileGRWithMCPResolver(
+				[]client.Object{gitRepoWithPropagate("my-mcp"), installedAppInstallation()},
+				resolver, minter,
+			)
+
+			secret := &corev1.Secret{}
+			Expect(mcpFake.Get(context.Background(),
+				types.NamespacedName{
+					Name:      fmt.Sprintf("gitrepository-%s-%s", grNamespace, grName),
+					Namespace: "flux-system",
+				},
+				secret)).To(Succeed())
+			Expect(secret.Data["password"]).To(Equal([]byte("ghs_test_token")))
+			Expect(secret.Data["username"]).To(Equal([]byte("x-access-token")))
+			Expect(secret.Type).To(Equal(corev1.SecretTypeBasicAuth))
+
+			Expect(out.Status.PropagateStatus).To(HaveLen(1))
+			Expect(out.Status.PropagateStatus[0].Phase).To(Equal(corev1alpha1.TokenSyncPhaseTokenSynced))
+			Expect(out.Status.PropagateStatus[0].TokenExpiresAt).NotTo(BeNil())
+		})
+
+		It("does not re-mint when the existing token is still valid", func() {
+			minter := &fakeMinter{token: "ghs_fresh"}
+			mcpFake := newMCPFakeClient()
+			resolver := &fakeMCPResolver{clients: map[string]client.Client{"my-mcp": mcpFake}}
+
+			gr := gitRepoWithPropagate("my-mcp")
+			validExpiry := metav1.NewTime(time.Now().Add(30 * time.Minute))
+			gr.Status.PropagateStatus = []corev1alpha1.MCPPropagateState{
+				{Name: "my-mcp", Phase: corev1alpha1.TokenSyncPhaseTokenSynced, TokenExpiresAt: &validExpiry},
+			}
+
+			reconcileGRWithMCPResolver(
+				[]client.Object{gr, installedAppInstallation()},
+				resolver, minter,
+			)
+
+			Expect(minter.callCount).To(Equal(0))
+		})
+
+		It("rotates the token when expiry is within tokenRotationWindow", func() {
+			minter := &fakeMinter{token: "ghs_rotated"}
+			mcpFake := newMCPFakeClient()
+			resolver := &fakeMCPResolver{clients: map[string]client.Client{"my-mcp": mcpFake}}
+
+			gr := gitRepoWithPropagate("my-mcp")
+			expiringSoon := metav1.NewTime(time.Now().Add(10 * time.Minute))
+			gr.Status.PropagateStatus = []corev1alpha1.MCPPropagateState{
+				{Name: "my-mcp", Phase: corev1alpha1.TokenSyncPhaseTokenSynced, TokenExpiresAt: &expiringSoon},
+			}
+
+			reconcileGRWithMCPResolver(
+				[]client.Object{gr, installedAppInstallation()},
+				resolver, minter,
+			)
+
+			Expect(minter.callCount).To(Equal(1))
+
+			secret := &corev1.Secret{}
+			Expect(mcpFake.Get(context.Background(),
+				types.NamespacedName{
+					Name:      fmt.Sprintf("gitrepository-%s-%s", grNamespace, grName),
+					Namespace: "flux-system",
+				},
+				secret)).To(Succeed())
+			Expect(secret.Data["password"]).To(Equal([]byte("ghs_rotated")))
+		})
+
+		It("deletes the token Secret when the MCP is removed from propagateTo", func() {
+			mcpFake := newMCPFakeClient()
+			resolver := &fakeMCPResolver{clients: map[string]client.Client{"old-mcp": mcpFake}}
+
+			existingSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("gitrepository-%s-%s", grNamespace, grName),
+					Namespace: "flux-system",
+				},
+			}
+			Expect(mcpFake.Create(context.Background(), existingSecret)).To(Succeed())
+
+			gr := gitRepo("my-connection")
+			gr.Status.PropagateStatus = []corev1alpha1.MCPPropagateState{
+				{Name: "old-mcp", Phase: corev1alpha1.TokenSyncPhaseTokenSynced},
+			}
+
+			reconcileGRWithMCPResolver(
+				[]client.Object{gr, installedAppInstallation()},
+				resolver, nil,
+			)
+
+			deleted := &corev1.Secret{}
+			err := mcpFake.Get(context.Background(),
+				types.NamespacedName{
+					Name:      fmt.Sprintf("gitrepository-%s-%s", grNamespace, grName),
+					Namespace: "flux-system",
+				},
+				deleted)
+			Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		})
+
+		It("sets Error phase when MCP cannot be resolved", func() {
+			resolver := &fakeMCPResolver{clients: map[string]client.Client{}}
+			minter := &fakeMinter{token: "irrelevant"}
+
+			out := reconcileGRWithMCPResolver(
+				[]client.Object{gitRepoWithPropagate("unreachable-mcp"), installedAppInstallation()},
+				resolver, minter,
+			)
+
+			Expect(out.Status.PropagateStatus).To(HaveLen(1))
+			Expect(out.Status.PropagateStatus[0].Name).To(Equal("unreachable-mcp"))
+			Expect(out.Status.PropagateStatus[0].Phase).To(Equal(corev1alpha1.TokenSyncPhaseError))
+			Expect(out.Status.PropagateStatus[0].Message).To(ContainSubstring("resolving MCP client failed"))
 		})
 	})
 })
