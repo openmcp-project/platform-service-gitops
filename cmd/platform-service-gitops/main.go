@@ -279,10 +279,10 @@ func runCommand(cmd *cobra.Command, _ []string) error {
 	}
 
 	mgr, err := ctrl.NewManager(onboardingCluster.RESTConfig(), ctrl.Options{
-		Scheme:                 scheme.Onboarding,
-		Metrics:                metricsServerOptions,
-		WebhookServer:          webhookServer,
-		HealthProbeBindAddress: probeAddr,
+		Scheme:                  scheme.Onboarding,
+		Metrics:                 metricsServerOptions,
+		WebhookServer:           webhookServer,
+		HealthProbeBindAddress:  probeAddr,
 		LeaderElection:          enableLeaderElection,
 		LeaderElectionID:        "4f40d865.openmcp.cloud",
 		LeaderElectionNamespace: "default",
@@ -321,7 +321,7 @@ func runCommand(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to create controller githubinstance: %w", err)
 	}
 
-	appInstall := githubcontroller.NewAppInstallationReconciler(platformCluster.Client(), credentialNamespace)
+	appInstall := githubcontroller.NewAppInstallationReconciler(onboardingCluster.Client(), platformCluster.Client(), credentialNamespace)
 	if err := appInstall.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("failed to create controller appinstallation: %w", err)
 	}

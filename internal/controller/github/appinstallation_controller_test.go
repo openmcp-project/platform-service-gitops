@@ -74,7 +74,7 @@ func condStatus(conds []metav1.Condition, t string) metav1.ConditionStatus {
 func reconcileAI(objs []any, ghc *fakeGitHub) *githubv1alpha1.AppInstallation {
 	builder := fake_ClientBuilder(objs)
 	cl := builder.Build()
-	r := controller.NewAppInstallationReconciler(cl, credNamespace)
+	r := controller.NewAppInstallationReconciler(cl, cl, credNamespace)
 	if ghc != nil {
 		r.SetGitHubClientFactory(func(githubapp.Credentials) (controller.GitHubClient, error) {
 			return ghc, nil
@@ -109,7 +109,7 @@ var _ = Describe("AppInstallationReconciler", func() {
 	Context("when the AppInstallation does not exist", func() {
 		It("returns no error", func() {
 			cl := fake_ClientBuilder(nil).Build()
-			r := controller.NewAppInstallationReconciler(cl, credNamespace)
+			r := controller.NewAppInstallationReconciler(cl, cl, credNamespace)
 			result, err := r.Reconcile(context.Background(), ctrl.Request{
 				NamespacedName: types.NamespacedName{Name: "nope", Namespace: aiNamespace},
 			})
