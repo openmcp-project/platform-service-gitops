@@ -189,7 +189,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := core.NewGitRepositoryReconciler(mgr.GetClient()).SetupWithManager(mgr); err != nil {
+	if err := core.NewGitRepositoryReconciler(mgr.GetClient(), credentialNamespace).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "core-gitrepository")
 		os.Exit(1)
 	}
