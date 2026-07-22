@@ -138,22 +138,28 @@ func (r *resolver) resolveOne(ctx context.Context, gitRepo *corev1alpha1.GitRepo
 	return result, nil
 }
 
-// ensureAccessRequest creates or updates the AccessRequest on the platform cluster.
+// ensureAccessRequest creates the AccessRequest on the platform cluster if it
+// does not exist yet. If it already exists (regardless of phase), it is left
+// untouched — AccessRequest.spec fields are immutable once set.
 func (r *resolver) ensureAccessRequest(ctx context.Context, arName, controlPlaneName, mcpNamespace string) error {
-	ar := &clustersv1alpha1.AccessRequest{}
-	err := r.platformClient.Get(ctx, client.ObjectKey{Name: arName, Namespace: r.controllerNamespace}, ar)
-	if err != nil && !apierrors.IsNotFound(err) {
+	existing := &clustersv1alpha1.AccessRequest{}
+	err := r.platformClient.Get(ctx, client.ObjectKey{Name: arName, Namespace: r.controllerNamespace}, existing)
+	if err == nil {
+		// Already exists — do not update (spec is immutable).
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
 		return fmt.Errorf("getting AccessRequest: %w", err)
 	}
 
-	desired := &clustersv1alpha1.AccessRequest{
+	ar := &clustersv1alpha1.AccessRequest{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      arName,
 			Namespace: r.controllerNamespace,
 		},
 		Spec: clustersv1alpha1.AccessRequestSpec{
 			// RequestRef points to the ClusterRequest that the openmcp operator
-			// creates for each MCP — the same pattern used by service-provider-crossplane.
+			// creates for each MCP.
 			RequestRef: &commonapi.ObjectReference{
 				Name:      controlPlaneName,
 				Namespace: mcpNamespace,
@@ -163,14 +169,7 @@ func (r *resolver) ensureAccessRequest(ctx context.Context, arName, controlPlane
 			},
 		},
 	}
-
-	if apierrors.IsNotFound(err) {
-		return r.platformClient.Create(ctx, desired)
-	}
-
-	// Already exists — update spec in case permissions changed.
-	ar.Spec = desired.Spec
-	return r.platformClient.Update(ctx, ar)
+	return r.platformClient.Create(ctx, ar)
 }
 
 // clusterFromAccessRequest builds a *clusters.Cluster from the kubeconfig Secret
