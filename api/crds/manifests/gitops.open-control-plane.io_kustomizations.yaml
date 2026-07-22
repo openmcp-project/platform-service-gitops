@@ -6,25 +6,25 @@ metadata:
     controller-gen.kubebuilder.io/version: v0.21.0
   labels:
     openmcp.cloud/cluster: onboarding
-  name: gitrepositories.gitops.open-control-plane.io
+  name: kustomizations.gitops.open-control-plane.io
 spec:
   group: gitops.open-control-plane.io
   names:
     categories:
     - gitops
     - openmcp
-    kind: GitRepository
-    listKind: GitRepositoryList
-    plural: gitrepositories
-    singular: gitrepository
+    kind: Kustomization
+    listKind: KustomizationList
+    plural: kustomizations
+    singular: kustomization
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.url
-      name: URL
+    - jsonPath: .spec.sourceRef.name
+      name: SOURCE
       type: string
-    - jsonPath: .spec.ref.branch
-      name: BRANCH
+    - jsonPath: .spec.path
+      name: PATH
       type: string
     - jsonPath: .status.conditions[?(@.type=='Ready')].status
       name: READY
@@ -35,7 +35,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: GitRepository is the Schema for the gitrepositories API.
+        description: Kustomization is the Schema for the kustomizations API.
         properties:
           apiVersion:
             description: |-
@@ -55,76 +55,47 @@ spec:
           metadata:
             type: object
           spec:
-            description: GitRepositorySpec defines the desired state of GitRepository.
+            description: KustomizationSpec defines the desired state of Kustomization.
             properties:
-              credentialRef:
-                description: CredentialRef references the credential provider for
-                  repository access.
+              interval:
+                description: Interval at which to reconcile the Kustomization.
+                pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
+                type: string
+              path:
+                default: ./
+                description: Path within the repository to reconcile.
+                type: string
+              prune:
+                description: Prune enables garbage collection of removed manifests.
+                type: boolean
+              sourceRef:
+                description: |-
+                  SourceRef points to the openmcp GitRepository to use as the source.
+                  Only kind: GitRepository (gitops.open-control-plane.io) is accepted.
                 properties:
-                  group:
-                    default: ""
-                    type: string
                   kind:
+                    description: Kind must be GitRepository.
+                    enum:
+                    - GitRepository
                     type: string
                   name:
+                    description: Name of the GitRepository in the same namespace.
                     type: string
                 required:
                 - kind
                 - name
                 type: object
-              path:
-                default: ./
-                description: Path within the repository to use as the source root.
-                type: string
-              propagateTo:
-                description: |-
-                  PropagateToControlPlanes lists ControlPlanes that should receive a
-                  scoped token and a Flux GitRepository resource for this source.
-                  Behaviour implemented in a follow-up issue.
-                items:
-                  description: PropagateTarget declares a ControlPlane that should
-                    receive scoped repository access.
-                  properties:
-                    kind:
-                      description: Kind of target. Currently only ControlPlane is
-                        supported.
-                      type: string
-                    matchLabels:
-                      additionalProperties:
-                        type: string
-                      type: object
-                    name:
-                      type: string
-                  required:
-                  - kind
-                  type: object
-                type: array
-              ref:
-                description: Ref specifies the branch, tag, or commit to track.
-                properties:
-                  branch:
-                    type: string
-                  commit:
-                    type: string
-                  tag:
-                    type: string
-                type: object
-              url:
-                description: URL is the HTTPS URL of the Git repository.
-                pattern: ^https?://.*
-                type: string
             required:
-            - credentialRef
-            - ref
-            - url
+            - interval
+            - sourceRef
             type: object
           status:
-            description: GitRepositoryStatus defines the observed state of GitRepository.
+            description: KustomizationStatus defines the observed state of Kustomization.
             properties:
               conditions:
                 description: |-
                   Conditions summarise the current state.
-                  Known types: Ready, CredentialResolved.
+                  Known types: Ready, SourceInvalid.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -183,6 +154,11 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              lastAppliedRevision:
+                description: |-
+                  LastAppliedRevision is the revision of the last successful reconciliation
+                  as reported by the backing Flux Kustomization.
+                type: string
               observedGeneration:
                 description: ObservedGeneration is the .metadata.generation this status
                   was computed from.
