@@ -4,6 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
+  labels:
+    openmcp.cloud/cluster: platform
   name: githubinstances.github.gitops.open-control-plane.io
 spec:
   group: github.gitops.open-control-plane.io

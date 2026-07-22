@@ -1,226 +1,348 @@
-/*
-Copyright 2026.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
+// SPDX-FileCopyrightText: 2026 SAP SE or an SAP affiliate company and Open Control Plane contributors
+// SPDX-License-Identifier: Apache-2.0
 
 package main
 
 import (
+	"context"
 	"crypto/tls"
-	"flag"
+	"fmt"
 	"os"
+	"time"
 
-	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
-	// to ensure that exec-entrypoint and run can make use of them.
+	rbacv1 "k8s.io/api/rbac/v1"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
-	"k8s.io/apimachinery/pkg/runtime"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"github.com/spf13/cobra"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
-	corev1alpha1 "github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1"
-	githubv1alpha1 "github.com/openmcp-project/platform-service-gitops/api/github/v1alpha1"
+	"github.com/openmcp-project/controller-utils/pkg/clusters"
+	crdutil "github.com/openmcp-project/controller-utils/pkg/crds"
+	"github.com/openmcp-project/controller-utils/pkg/logging"
+	clustersv1alpha1 "github.com/openmcp-project/openmcp-operator/api/clusters/v1alpha1"
+	openmcpconsts "github.com/openmcp-project/openmcp-operator/api/constants"
+	"github.com/openmcp-project/openmcp-operator/lib/clusteraccess"
+	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
+	"github.com/openmcp-project/platform-service-gitops/api/crds"
 	"github.com/openmcp-project/platform-service-gitops/internal/controller/core"
 	githubcontroller "github.com/openmcp-project/platform-service-gitops/internal/controller/github"
+	"github.com/openmcp-project/platform-service-gitops/internal/mcpaccess"
+	"github.com/openmcp-project/platform-service-gitops/internal/scheme"
 	// +kubebuilder:scaffold:imports
 )
 
-var (
-	scheme   = runtime.NewScheme()
-	setupLog = ctrl.Log.WithName("setup")
+const (
+	controllerName = "gitops.open-control-plane.io"
+	githubGroup    = "github.gitops.open-control-plane.io"
+	verbGet        = "get"
+	verbPatch      = "patch"
+	verbUpdate     = "update"
 )
 
-func init() {
-	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+var logger logging.Logger
 
-	utilruntime.Must(corev1alpha1.AddToScheme(scheme))
-	utilruntime.Must(githubv1alpha1.AddToScheme(scheme))
-	utilruntime.Must(kustomizev1.AddToScheme(scheme))
-	utilruntime.Must(sourcev1.AddToScheme(scheme))
-	// +kubebuilder:scaffold:scheme
+func main() {
+	rootCmd := &cobra.Command{
+		Use:   "platform-service-gitops",
+		Short: "GitOps platform service for OpenControlPlane",
+	}
+
+	runCmd := &cobra.Command{
+		Use:   "run",
+		Short: "Run the platform-service-gitops controller manager",
+		RunE:  runCommand,
+	}
+	addCommonFlags(runCmd)
+	addServerFlags(runCmd)
+
+	initCmd := &cobra.Command{
+		Use:   "init",
+		Short: "Install CRDs onto the platform and onboarding clusters",
+		RunE:  initCommand,
+	}
+	initCmd.Flags().String("provider-name", "", "Name of this service provider (used to register GVKs).")
+
+	rootCmd.AddCommand(runCmd, initCmd)
+
+	var err error
+	logger, err = logging.GetLogger()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to get logger: %v\n", err)
+		os.Exit(1)
+	}
+	ctrl.SetLogger(logger.Logr())
+
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func addCommonFlags(cmd *cobra.Command) {
+	cmd.Flags().String("credential-namespace", "platform-service-gitops-system",
+		"Default namespace for GitHub App credential Secrets referenced by GitHubInstance resources.")
+	cmd.Flags().String("flux-namespace", "flux-system",
+		"Namespace inside each MCP where Flux Secrets and GitRepository resources are written.")
+	cmd.Flags().Duration("token-renew-buffer", 15*time.Minute,
+		"How long before token expiry to rotate it (e.g. 15m). The actual expiry comes from GitHub.")
+}
+
+func addServerFlags(cmd *cobra.Command) {
+	cmd.Flags().String("metrics-bind-address", "0",
+		"The address the metrics endpoint binds to. Use :8443 for HTTPS or :8080 for HTTP.")
+	cmd.Flags().String("health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	cmd.Flags().Bool("leader-elect", false, "Enable leader election for controller manager.")
+	cmd.Flags().Bool("metrics-secure", true, "Serve metrics over HTTPS.")
+	cmd.Flags().Bool("enable-http2", false, "Enable HTTP/2 for the metrics and webhook servers.")
+	cmd.Flags().String("webhook-cert-path", "", "Directory containing the webhook certificate.")
+	cmd.Flags().String("webhook-cert-name", "tls.crt", "Webhook certificate filename.")
+	cmd.Flags().String("webhook-cert-key", "tls.key", "Webhook key filename.")
+	cmd.Flags().String("metrics-cert-path", "", "Directory containing the metrics server certificate.")
+	cmd.Flags().String("metrics-cert-name", "tls.crt", "Metrics server certificate filename.")
+	cmd.Flags().String("metrics-cert-key", "tls.key", "Metrics server key filename.")
+}
+
+func initializePlatformCluster() (*clusters.Cluster, error) {
+	platformCluster := clusters.New("platform").WithRESTConfig(ctrl.GetConfigOrDie())
+	if err := platformCluster.InitializeClient(scheme.Platform); err != nil {
+		return nil, fmt.Errorf("failed to initialize platform cluster client: %w", err)
+	}
+	return platformCluster, nil
+}
+
+func initCommand(cmd *cobra.Command, _ []string) error {
+	platformCluster, err := initializePlatformCluster()
+	if err != nil {
+		return fmt.Errorf("failed to initialize platform cluster: %w", err)
+	}
+	providerName, _ := cmd.Flags().GetString("provider-name")
+	runInit(ctrl.SetupSignalHandler(), platformCluster, providerName)
+	return nil
+}
+
+func runInit(ctx context.Context, platformCluster *clusters.Cluster, providerName string) {
+	logger.Info("Running init")
+
+	clusterAccessMgr := clusteraccess.NewClusterAccessManager(
+		platformCluster.Client(), controllerName, os.Getenv(openmcpconsts.EnvVariablePodNamespace),
+	).WithLogger(&logger).
+		WithInterval(10 * time.Second).
+		WithTimeout(30 * time.Minute)
+
+	onboardingCluster, err := clusterAccessMgr.CreateAndWaitForCluster(ctx, "onboarding-init",
+		clustersv1alpha1.PURPOSE_ONBOARDING, scheme.Onboarding,
+		[]clustersv1alpha1.PermissionsRequest{
+			{Rules: []rbacv1.PolicyRule{{
+				APIGroups: []string{"*"}, Resources: []string{"*"}, Verbs: []string{"*"},
+			}}},
+		})
+	if err != nil {
+		logger.Error(err, "Failed to obtain onboarding cluster for init")
+		return
+	}
+
+	crdList, err := crds.CRDs()
+	if err != nil {
+		logger.Error(err, "Failed to load CRDs")
+		return
+	}
+
+	crdMgr := crdutil.NewCRDManager(openmcpconsts.ClusterLabel, func() ([]*apiextv1.CustomResourceDefinition, error) {
+		return crdList, nil
+	})
+	crdMgr.AddCRDLabelToClusterMapping(clustersv1alpha1.PURPOSE_PLATFORM, platformCluster)
+	crdMgr.AddCRDLabelToClusterMapping(clustersv1alpha1.PURPOSE_ONBOARDING, onboardingCluster)
+
+	if err := crdMgr.CreateOrUpdateCRDs(ctx, &logger); err != nil {
+		logger.Error(err, "Failed to create or update CRDs")
+	}
+
+	if providerName != "" {
+		logger.Info("Skipping GVK registration — providerName flag not yet wired to ServiceProvider object")
+	}
+
+	logger.Info("Init complete")
 }
 
 // nolint:gocyclo
-func main() {
-	var metricsAddr string
-	var metricsCertPath, metricsCertName, metricsCertKey string
-	var webhookCertPath, webhookCertName, webhookCertKey string
-	var enableLeaderElection bool
-	var probeAddr string
-	var secureMetrics bool
-	var enableHTTP2 bool
-	var credentialNamespace string
+func runCommand(cmd *cobra.Command, _ []string) error {
+	metricsAddr, _ := cmd.Flags().GetString("metrics-bind-address")
+	probeAddr, _ := cmd.Flags().GetString("health-probe-bind-address")
+	enableLeaderElection, _ := cmd.Flags().GetBool("leader-elect")
+	secureMetrics, _ := cmd.Flags().GetBool("metrics-secure")
+	enableHTTP2, _ := cmd.Flags().GetBool("enable-http2")
+	webhookCertPath, _ := cmd.Flags().GetString("webhook-cert-path")
+	webhookCertName, _ := cmd.Flags().GetString("webhook-cert-name")
+	webhookCertKey, _ := cmd.Flags().GetString("webhook-cert-key")
+	metricsCertPath, _ := cmd.Flags().GetString("metrics-cert-path")
+	metricsCertName, _ := cmd.Flags().GetString("metrics-cert-name")
+	metricsCertKey, _ := cmd.Flags().GetString("metrics-cert-key")
+	credentialNamespace, _ := cmd.Flags().GetString("credential-namespace")
+	fluxNamespace, _ := cmd.Flags().GetString("flux-namespace")
+	tokenRenewBuffer, _ := cmd.Flags().GetDuration("token-renew-buffer")
+
 	var tlsOpts []func(*tls.Config)
-	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
-		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
-	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
-	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
-		"Enable leader election for controller manager. "+
-			"Enabling this will ensure there is only one active controller manager.")
-	flag.BoolVar(&secureMetrics, "metrics-secure", true,
-		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
-	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
-	flag.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt", "The name of the webhook certificate file.")
-	flag.StringVar(&webhookCertKey, "webhook-cert-key", "tls.key", "The name of the webhook key file.")
-	flag.StringVar(&metricsCertPath, "metrics-cert-path", "",
-		"The directory that contains the metrics server certificate.")
-	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
-	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
-	flag.BoolVar(&enableHTTP2, "enable-http2", false,
-		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-	flag.StringVar(&credentialNamespace, "credential-namespace", "platform-service-gitops-system",
-		"Default namespace for GitHub App credential Secrets referenced by GitHubInstance resources.")
-	opts := zap.Options{
-		Development: true,
-	}
-	opts.BindFlags(flag.CommandLine)
-	flag.Parse()
-
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
-
-	// if the enable-http2 flag is false (the default), http/2 should be disabled
-	// due to its vulnerabilities. More specifically, disabling http/2 will
-	// prevent from being vulnerable to the HTTP/2 Stream Cancellation and
-	// Rapid Reset CVEs. For more information see:
-	// - https://github.com/advisories/GHSA-qppj-fm5r-hxr3
-	// - https://github.com/advisories/GHSA-4374-p667-p6c8
-	disableHTTP2 := func(c *tls.Config) {
-		setupLog.Info("Disabling HTTP/2")
-		c.NextProtos = []string{"http/1.1"}
-	}
-
 	if !enableHTTP2 {
-		tlsOpts = append(tlsOpts, disableHTTP2)
+		tlsOpts = append(tlsOpts, func(c *tls.Config) {
+			logger.Info("disabling HTTP/2")
+			c.NextProtos = []string{"http/1.1"}
+		})
 	}
 
-	// Initial webhook TLS options
+	platformCluster, err := initializePlatformCluster()
+	if err != nil {
+		return fmt.Errorf("failed to initialize platform cluster: %w", err)
+	}
+
+	ctx := context.Background()
+	podNamespace := os.Getenv(openmcpconsts.EnvVariablePodNamespace)
+
+	clusterAccessMgr := clusteraccess.NewClusterAccessManager(platformCluster.Client(), controllerName, podNamespace).
+		WithLogger(&logger).
+		WithInterval(10 * time.Second).
+		WithTimeout(30 * time.Minute)
+
+	onboardingCluster, err := clusterAccessMgr.CreateAndWaitForCluster(ctx, "onboarding",
+		clustersv1alpha1.PURPOSE_ONBOARDING, scheme.Onboarding,
+		[]clustersv1alpha1.PermissionsRequest{
+			{
+				Rules: []rbacv1.PolicyRule{
+					{
+						APIGroups: []string{controllerName, githubGroup},
+						Resources: []string{"gitrepositories", "appinstallations", "kustomizations"},
+						Verbs:     []string{verbGet, "list", "watch"},
+					},
+					{
+						APIGroups: []string{controllerName},
+						Resources: []string{"gitrepositories", "kustomizations"},
+						Verbs:     []string{verbUpdate, verbPatch},
+					},
+					{
+						APIGroups: []string{controllerName, githubGroup},
+						Resources: []string{"gitrepositories/status", "kustomizations/status", "appinstallations/status"},
+						Verbs:     []string{verbGet, verbUpdate, verbPatch},
+					},
+					{
+						APIGroups: []string{controllerName},
+						Resources: []string{"gitrepositories/finalizers"},
+						Verbs:     []string{verbUpdate},
+					},
+					{
+						APIGroups: []string{"coordination.k8s.io"},
+						Resources: []string{"leases"},
+						Verbs:     []string{verbGet, "list", "watch", "create", verbUpdate, verbPatch, "delete"},
+					},
+					{
+						APIGroups: []string{""},
+						Resources: []string{"events"},
+						Verbs:     []string{"create", verbPatch},
+					},
+				},
+			},
+		})
+	if err != nil {
+		return fmt.Errorf("failed to obtain onboarding cluster access: %w", err)
+	}
+
 	webhookTLSOpts := tlsOpts
-	webhookServerOptions := webhook.Options{
-		TLSOpts: webhookTLSOpts,
-	}
-
 	if len(webhookCertPath) > 0 {
-		setupLog.Info("Initializing webhook certificate watcher using provided certificates",
-			"webhook-cert-path", webhookCertPath, "webhook-cert-name", webhookCertName, "webhook-cert-key", webhookCertKey)
-
-		webhookServerOptions.CertDir = webhookCertPath
-		webhookServerOptions.CertName = webhookCertName
-		webhookServerOptions.KeyName = webhookCertKey
+		logger.Info("Using provided webhook certificate", "path", webhookCertPath)
 	}
 
-	webhookServer := webhook.NewServer(webhookServerOptions)
+	webhookServer := webhook.NewServer(webhook.Options{
+		TLSOpts:  webhookTLSOpts,
+		CertDir:  webhookCertPath,
+		CertName: webhookCertName,
+		KeyName:  webhookCertKey,
+	})
 
-	// Metrics endpoint is enabled in 'config/default/kustomization.yaml'. The Metrics options configure the server.
-	// More info:
-	// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.24.1/pkg/metrics/server
-	// - https://book.kubebuilder.io/reference/metrics.html
 	metricsServerOptions := metricsserver.Options{
 		BindAddress:   metricsAddr,
 		SecureServing: secureMetrics,
 		TLSOpts:       tlsOpts,
 	}
-
 	if secureMetrics {
-		// FilterProvider is used to protect the metrics endpoint with authn/authz.
-		// These configurations ensure that only authorized users and service accounts
-		// can access the metrics endpoint. The RBAC are configured in 'config/rbac/kustomization.yaml'. More info:
-		// https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.24.1/pkg/metrics/filters#WithAuthenticationAndAuthorization
 		metricsServerOptions.FilterProvider = filters.WithAuthenticationAndAuthorization
 	}
-
-	// If the certificate is not specified, controller-runtime will automatically
-	// generate self-signed certificates for the metrics server. While convenient for development and testing,
-	// this setup is not recommended for production.
-	//
-	// TODO(user): If you enable certManager, uncomment the following lines:
-	// - [METRICS-WITH-CERTS] at config/default/kustomization.yaml to generate and use certificates
-	// managed by cert-manager for the metrics server.
-	// - [PROMETHEUS-WITH-CERTS] at config/prometheus/kustomization.yaml for TLS certification.
 	if len(metricsCertPath) > 0 {
-		setupLog.Info("Initializing metrics certificate watcher using provided certificates",
-			"metrics-cert-path", metricsCertPath, "metrics-cert-name", metricsCertName, "metrics-cert-key", metricsCertKey)
-
+		logger.Info("Using provided metrics certificate", "path", metricsCertPath)
 		metricsServerOptions.CertDir = metricsCertPath
 		metricsServerOptions.CertName = metricsCertName
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
-		Metrics:                metricsServerOptions,
-		WebhookServer:          webhookServer,
-		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "4f40d865.openmcp.cloud",
-		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
-		// when the Manager ends. This requires the binary to immediately end when the
-		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
-		// speeds up voluntary leader transitions as the new leader don't have to wait
-		// LeaseDuration time first.
-		//
-		// In the default scaffold provided, the program ends immediately after
-		// the manager stops, so would be fine to enable this option. However,
-		// if you are doing or is intended to do any operation such as perform cleanups
-		// after the manager stops then its usage might be unsafe.
-		// LeaderElectionReleaseOnCancel: true,
+	mgr, err := ctrl.NewManager(onboardingCluster.RESTConfig(), ctrl.Options{
+		Scheme:                  scheme.Onboarding,
+		Metrics:                 metricsServerOptions,
+		WebhookServer:           webhookServer,
+		HealthProbeBindAddress:  probeAddr,
+		LeaderElection:          enableLeaderElection,
+		LeaderElectionID:        "4f40d865.openmcp.cloud",
+		LeaderElectionNamespace: "default",
 	})
 	if err != nil {
-		setupLog.Error(err, "Failed to start manager")
-		os.Exit(1)
+		return fmt.Errorf("unable to start manager: %w", err)
 	}
 
-	if err := core.NewGitRepositoryReconciler(mgr.GetClient()).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "core-gitrepository")
-		os.Exit(1)
+	// Add the platform cluster to the manager so its cache is started.
+	// Required for GitHubInstanceReconciler's source.Kind watch on the platform cluster.
+	if err := mgr.Add(platformCluster.Cluster()); err != nil {
+		return fmt.Errorf("unable to add platform cluster to manager: %w", err)
 	}
-	ghInstance := githubcontroller.NewGitHubInstanceReconciler(mgr.GetClient(), credentialNamespace)
+
+	// Register Kustomization scheme on the manager scheme so the kustomization controller works.
+	if err := kustomizev1.AddToScheme(mgr.GetScheme()); err != nil {
+		return fmt.Errorf("unable to add kustomizev1 scheme: %w", err)
+	}
+
+	gitRepoReconciler := core.NewGitRepositoryReconciler(
+		onboardingCluster.Client(),
+		platformCluster.Client(),
+		mcpaccess.NewResolver(platformCluster.Client(), podNamespace),
+		credentialNamespace,
+		fluxNamespace,
+		tokenRenewBuffer,
+	)
+	if err := gitRepoReconciler.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("failed to create controller gitrepository: %w", err)
+	}
+
+	ghInstance := githubcontroller.NewGitHubInstanceReconciler(
+		platformCluster.Client(), platformCluster.Cluster(), credentialNamespace,
+	)
 	if err := ghInstance.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "github-githubinstance")
-		os.Exit(1)
+		return fmt.Errorf("failed to create controller githubinstance: %w", err)
 	}
-	appInstall := githubcontroller.NewAppInstallationReconciler(mgr.GetClient(), credentialNamespace)
+
+	appInstall := githubcontroller.NewAppInstallationReconciler(
+		onboardingCluster.Client(), platformCluster.Client(), credentialNamespace,
+	)
 	if err := appInstall.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "github-appinstallation")
-		os.Exit(1)
+		return fmt.Errorf("failed to create controller appinstallation: %w", err)
 	}
-	if err := core.NewKustomizationReconciler(mgr.GetClient()).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "core-kustomization")
-		os.Exit(1)
+
+	if err := core.NewKustomizationReconciler(onboardingCluster.Client()).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("failed to create controller kustomization: %w", err)
 	}
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
-		setupLog.Error(err, "Failed to set up health check")
-		os.Exit(1)
+		return fmt.Errorf("unable to set up health check: %w", err)
 	}
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-		setupLog.Error(err, "Failed to set up ready check")
-		os.Exit(1)
+		return fmt.Errorf("unable to set up ready check: %w", err)
 	}
 
-	setupLog.Info("Starting manager")
+	logger.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		setupLog.Error(err, "Failed to run manager")
-		os.Exit(1)
+		return fmt.Errorf("problem running manager: %w", err)
 	}
+	return nil
 }
