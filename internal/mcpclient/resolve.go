@@ -2,8 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package mcpclient resolves a target MCP name to a controller-runtime client
-// for that cluster. It reads a kubeconfig Secret from the hub namespace and
-// constructs a REST client from it.
+// for that cluster.
+//
+// The control-plane-operator (github.com/openmcp-project/control-plane-operator)
+// creates a dedicated hub namespace "cp-<controlplane-name>" for each ControlPlane
+// CR and writes a Secret named "flux-kubeconfig" into it. That Secret holds a
+// service-account kubeconfig (key: "kubeconfig") scoped for Flux. We read it here
+// to build a cross-cluster client for the target MCP.
 package mcpclient
 
 import (
@@ -26,12 +31,28 @@ var mcpScheme = func() *runtime.Scheme {
 	return s
 }()
 
+const (
+	// fluxKubeconfigSecretName is the name used by control-plane-operator for the
+	// Flux service-account kubeconfig Secret it writes into each ControlPlane namespace.
+	fluxKubeconfigSecretName = "flux-kubeconfig"
+
+	// cpNamespacePrefix is the hub namespace prefix applied by control-plane-operator
+	// when it creates a dedicated namespace for each ControlPlane CR.
+	cpNamespacePrefix = "cp-"
+)
+
 // Resolve returns a client.Client for the target MCP cluster.
-// It reads the kubeconfig from a Secret named "mcp-<mcpName>-kubeconfig" in namespace.
-// Each call creates a new HTTP transport and REST mapper — callers should cache the
-// returned client rather than calling Resolve on every reconcile.
-func Resolve(ctx context.Context, c client.Client, namespace, mcpName string) (client.Client, error) {
-	secretName := fmt.Sprintf("mcp-%s-kubeconfig", mcpName)
+//
+// The control-plane-operator creates a hub namespace "cp-<mcpName>" for each
+// ControlPlane and writes a Secret "flux-kubeconfig" into it with a Flux-scoped
+// service-account kubeconfig (data key: "kubeconfig"). This function reads that
+// Secret to build the cross-cluster client.
+//
+// Each call creates a new HTTP transport and REST mapper — callers should cache
+// the returned client rather than calling Resolve on every reconcile.
+func Resolve(ctx context.Context, c client.Client, mcpName string) (client.Client, error) {
+	namespace := cpNamespacePrefix + mcpName
+	secretName := fluxKubeconfigSecretName
 	secret := &corev1.Secret{}
 	if err := c.Get(ctx, types.NamespacedName{Name: secretName, Namespace: namespace}, secret); err != nil {
 		if apierrors.IsNotFound(err) {

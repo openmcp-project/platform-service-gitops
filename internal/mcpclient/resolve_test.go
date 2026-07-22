@@ -21,20 +21,21 @@ func TestResolve_MissingSecret(t *testing.T) {
 	_ = corev1.AddToScheme(sc)
 	cl := fake.NewClientBuilder().WithScheme(sc).Build()
 
-	_, err := mcpclient.Resolve(context.Background(), cl, "my-project", "my-mcp")
+	_, err := mcpclient.Resolve(context.Background(), cl, "my-mcp")
 	assert.ErrorContains(t, err, "kubeconfig Secret")
 }
 
 func TestResolve_MissingKey(t *testing.T) {
 	sc := runtime.NewScheme()
 	_ = corev1.AddToScheme(sc)
+	// control-plane-operator writes "flux-kubeconfig" in namespace "cp-<name>"
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "mcp-my-mcp-kubeconfig", Namespace: "my-project"},
+		ObjectMeta: metav1.ObjectMeta{Name: "flux-kubeconfig", Namespace: "cp-my-mcp"},
 		Data:       map[string][]byte{},
 	}
 	cl := fake.NewClientBuilder().WithScheme(sc).WithObjects(secret).Build()
 
-	_, err := mcpclient.Resolve(context.Background(), cl, "my-project", "my-mcp")
+	_, err := mcpclient.Resolve(context.Background(), cl, "my-mcp")
 	assert.ErrorContains(t, err, `missing key "kubeconfig"`)
 }
 
@@ -42,11 +43,11 @@ func TestResolve_InvalidKubeconfig(t *testing.T) {
 	sc := runtime.NewScheme()
 	_ = corev1.AddToScheme(sc)
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "mcp-my-mcp-kubeconfig", Namespace: "my-project"},
+		ObjectMeta: metav1.ObjectMeta{Name: "flux-kubeconfig", Namespace: "cp-my-mcp"},
 		Data:       map[string][]byte{"kubeconfig": []byte("not-valid-yaml")},
 	}
 	cl := fake.NewClientBuilder().WithScheme(sc).WithObjects(secret).Build()
 
-	_, err := mcpclient.Resolve(context.Background(), cl, "my-project", "my-mcp")
+	_, err := mcpclient.Resolve(context.Background(), cl, "my-mcp")
 	assert.ErrorContains(t, err, "building REST config")
 }

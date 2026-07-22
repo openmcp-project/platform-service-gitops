@@ -54,13 +54,13 @@ type TokenMinter interface {
 
 // MCPClientResolver resolves a PropagateTarget name to a client.Client for that cluster.
 type MCPClientResolver interface {
-	Resolve(ctx context.Context, namespace, mcpName string) (client.Client, error)
+	Resolve(ctx context.Context, mcpName string) (client.Client, error)
 }
 
-type mcpClientResolverFunc func(ctx context.Context, namespace, mcpName string) (client.Client, error)
+type mcpClientResolverFunc func(ctx context.Context, mcpName string) (client.Client, error)
 
-func (f mcpClientResolverFunc) Resolve(ctx context.Context, namespace, mcpName string) (client.Client, error) {
-	return f(ctx, namespace, mcpName)
+func (f mcpClientResolverFunc) Resolve(ctx context.Context, mcpName string) (client.Client, error) {
+	return f(ctx, mcpName)
 }
 
 // GitRepositoryReconciler resolves a GitRepository's credentialRef to an
@@ -91,8 +91,8 @@ func NewGitRepositoryReconciler(c client.Client, credentialNamespace string) *Gi
 			return githubapp.NewClient(creds)
 		},
 	}
-	r.mcpResolver = mcpClientResolverFunc(func(ctx context.Context, ns, name string) (client.Client, error) {
-		return mcpclient.Resolve(ctx, c, ns, name)
+	r.mcpResolver = mcpClientResolverFunc(func(ctx context.Context, name string) (client.Client, error) {
+		return mcpclient.Resolve(ctx, c, name)
 	})
 	r.resolveCredentials = func(ctx context.Context, ai *githubv1alpha1.AppInstallation) (githubapp.Credentials, error) {
 		return credentials.Resolve(ctx, c, ai.Spec.InstanceRef.Name, ai.Spec.CredentialName, credentialNamespace)
@@ -329,7 +329,7 @@ func (r *GitRepositoryReconciler) syncOneMCP(
 		return *existing
 	}
 
-	mcpClient, err := r.mcpResolver.Resolve(ctx, r.credentialNamespace, target.Name)
+	mcpClient, err := r.mcpResolver.Resolve(ctx, target.Name)
 	if err != nil {
 		logger.Error(err, "failed to resolve MCP client", "mcp", target.Name)
 		return corev1alpha1.MCPPropagateState{
@@ -449,7 +449,7 @@ func (r *GitRepositoryReconciler) deleteTokenSecret(
 	gr *corev1alpha1.GitRepository,
 	mcpName string,
 ) error {
-	mcpClient, err := r.mcpResolver.Resolve(ctx, r.credentialNamespace, mcpName)
+	mcpClient, err := r.mcpResolver.Resolve(ctx, mcpName)
 	if err != nil {
 		return fmt.Errorf("resolving MCP client: %w", err)
 	}

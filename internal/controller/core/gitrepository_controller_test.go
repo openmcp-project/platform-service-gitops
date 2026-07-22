@@ -91,7 +91,7 @@ type fakeMCPResolver struct {
 	clients map[string]client.Client
 }
 
-func (f *fakeMCPResolver) Resolve(_ context.Context, _, mcpName string) (client.Client, error) {
+func (f *fakeMCPResolver) Resolve(_ context.Context, mcpName string) (client.Client, error) {
 	cl, ok := f.clients[mcpName]
 	if !ok {
 		return nil, fmt.Errorf("kubeconfig Secret for MCP %q not found", mcpName)
