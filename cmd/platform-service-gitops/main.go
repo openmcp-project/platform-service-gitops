@@ -222,6 +222,23 @@ func runCommand(cmd *cobra.Command, _ []string) error {
 						Resources: []string{"gitrepositories/status", "kustomizations/status"},
 						Verbs:     []string{"get", "update", "patch"},
 					},
+					{
+						APIGroups: []string{"gitops.open-control-plane.io"},
+						Resources: []string{"gitrepositories/finalizers"},
+						Verbs:     []string{"update"},
+					},
+					{
+						// Leader election lease in the default namespace on the onboarding cluster.
+						APIGroups: []string{"coordination.k8s.io"},
+						Resources: []string{"leases"},
+						Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+					},
+					{
+						// Leader election events.
+						APIGroups: []string{""},
+						Resources: []string{"events"},
+						Verbs:     []string{"create", "patch"},
+					},
 				},
 			},
 		})
