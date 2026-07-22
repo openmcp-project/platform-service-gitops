@@ -71,6 +71,7 @@ func (f mcpClientResolverFunc) Resolve(ctx context.Context, namespace, mcpName s
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=github.gitops.open-control-plane.io,resources=appinstallations,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 type GitRepositoryReconciler struct {
 	client              client.Client
 	credentialNamespace string
