@@ -330,6 +330,36 @@ var _ = Describe("GitRepositoryReconciler", func() {
 			Expect(apierrors.IsNotFound(err)).To(BeTrue())
 		})
 
+		It("recreates the Secret when an existing one has the wrong type", func() {
+			minter := &fakeMinter{token: "ghs_retyped"}
+			mcpFake := newMCPFakeClient()
+			resolver := &fakeMCPResolver{clients: map[string]client.Client{testMCPName: mcpFake}}
+
+			wrongType := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      fmt.Sprintf("gitrepository-%s-%s", grNamespace, grName),
+					Namespace: fluxSecretNamespace,
+				},
+				Type: corev1.SecretTypeOpaque,
+			}
+			Expect(mcpFake.Create(context.Background(), wrongType)).To(Succeed())
+
+			reconcileGRWithMCPResolver(
+				[]client.Object{gitRepoWithPropagate(testMCPName), installedAppInstallation()},
+				resolver, minter,
+			)
+
+			secret := &corev1.Secret{}
+			Expect(mcpFake.Get(context.Background(),
+				types.NamespacedName{
+					Name:      fmt.Sprintf("gitrepository-%s-%s", grNamespace, grName),
+					Namespace: fluxSecretNamespace,
+				},
+				secret)).To(Succeed())
+			Expect(secret.Type).To(Equal(corev1.SecretTypeBasicAuth))
+			Expect(secret.Data["password"]).To(Equal([]byte("ghs_retyped")))
+		})
+
 		It("sets Error phase when MCP cannot be resolved", func() {
 			resolver := &fakeMCPResolver{clients: map[string]client.Client{}}
 			minter := &fakeMinter{token: "irrelevant"}

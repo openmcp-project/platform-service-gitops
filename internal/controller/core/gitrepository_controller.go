@@ -57,12 +57,6 @@ type MCPClientResolver interface {
 	Resolve(ctx context.Context, mcpName string) (client.Client, error)
 }
 
-type mcpClientResolverFunc func(ctx context.Context, mcpName string) (client.Client, error)
-
-func (f mcpClientResolverFunc) Resolve(ctx context.Context, mcpName string) (client.Client, error) {
-	return f(ctx, mcpName)
-}
-
 // GitRepositoryReconciler resolves a GitRepository's credentialRef to an
 // AppInstallation and sets the CredentialResolved/Ready conditions based on the
 // AppInstallation's verified status. When credentials are resolved and
@@ -91,9 +85,7 @@ func NewGitRepositoryReconciler(c client.Client, credentialNamespace string) *Gi
 			return githubapp.NewClient(creds)
 		},
 	}
-	r.mcpResolver = mcpClientResolverFunc(func(ctx context.Context, name string) (client.Client, error) {
-		return mcpclient.Resolve(ctx, c, name)
-	})
+	r.mcpResolver = mcpclient.NewResolver(c)
 	r.resolveCredentials = func(ctx context.Context, ai *githubv1alpha1.AppInstallation) (githubapp.Credentials, error) {
 		return credentials.Resolve(ctx, c, ai.Spec.InstanceRef.Name, ai.Spec.CredentialName, credentialNamespace)
 	}
@@ -409,6 +401,20 @@ func (r *GitRepositoryReconciler) writeTokenSecret(
 	gr *corev1alpha1.GitRepository,
 	token string,
 ) error {
+	// Pre-flight: if a Secret with the wrong type already exists, delete it before
+	// calling CreateOrUpdate. Secret.Type is immutable once set, so CreateOrUpdate
+	// cannot fix a type mismatch — it must be deleted and recreated.
+	existing := &corev1.Secret{}
+	if err := mcpClient.Get(ctx, types.NamespacedName{Name: name, Namespace: fluxSecretNamespace}, existing); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("fetching Secret %s/%s: %w", fluxSecretNamespace, name, err)
+		}
+	} else if existing.Type != "" && existing.Type != corev1.SecretTypeBasicAuth {
+		if delErr := mcpClient.Delete(ctx, existing); delErr != nil && !apierrors.IsNotFound(delErr) {
+			return fmt.Errorf("deleting Secret with wrong type: %w", delErr)
+		}
+	}
+
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -426,14 +432,6 @@ func (r *GitRepositoryReconciler) writeTokenSecret(
 		}
 		secret.Data["username"] = []byte("x-access-token")
 		secret.Data["password"] = []byte(token)
-		// Secret.Type is immutable once set. If the existing Secret has a different
-		// type (e.g. Opaque), delete it and let CreateOrUpdate recreate it.
-		if secret.Type != "" && secret.Type != corev1.SecretTypeBasicAuth {
-			if delErr := mcpClient.Delete(ctx, secret); delErr != nil && !apierrors.IsNotFound(delErr) {
-				return fmt.Errorf("deleting Secret with wrong type: %w", delErr)
-			}
-			secret.ResourceVersion = ""
-		}
 		secret.Type = corev1.SecretTypeBasicAuth
 		return nil
 	})

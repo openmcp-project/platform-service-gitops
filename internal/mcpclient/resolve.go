@@ -14,6 +14,7 @@ package mcpclient
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -86,4 +87,34 @@ func Resolve(ctx context.Context, c client.Client, mcpName string) (client.Clien
 		return nil, fmt.Errorf("building client for MCP %q: %w", mcpName, err)
 	}
 	return mcpClient, nil
+}
+
+// Resolver is a caching wrapper around Resolve. It builds one client.Client per
+// MCP name and reuses it across reconcile loops, avoiding repeated TLS handshakes
+// and REST mapper discovery calls.
+type Resolver struct {
+	hubClient client.Client
+	cache     sync.Map // key: string (mcpName), value: client.Client
+}
+
+// NewResolver returns a Resolver backed by the given hub-cluster client.
+func NewResolver(hubClient client.Client) *Resolver {
+	return &Resolver{hubClient: hubClient}
+}
+
+// Resolve returns a cached client.Client for the named MCP, building one on
+// first access. Errors are not cached — a failed call is retried on the next
+// invocation.
+func (r *Resolver) Resolve(ctx context.Context, mcpName string) (client.Client, error) {
+	if v, ok := r.cache.Load(mcpName); ok {
+		return v.(client.Client), nil
+	}
+	cl, err := Resolve(ctx, r.hubClient, mcpName)
+	if err != nil {
+		return nil, err
+	}
+	// LoadOrStore is race-safe: if two goroutines built a client concurrently,
+	// we use whichever was stored first and discard the other.
+	actual, _ := r.cache.LoadOrStore(mcpName, cl)
+	return actual.(client.Client), nil
 }

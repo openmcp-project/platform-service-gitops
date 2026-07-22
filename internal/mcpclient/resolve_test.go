@@ -51,3 +51,22 @@ func TestResolve_InvalidKubeconfig(t *testing.T) {
 	_, err := mcpclient.Resolve(context.Background(), cl, "my-mcp")
 	assert.ErrorContains(t, err, "building REST config")
 }
+
+func TestResolver_DoesNotCacheErrors(t *testing.T) {
+	sc := runtime.NewScheme()
+	_ = corev1.AddToScheme(sc)
+	// Invalid kubeconfig — Resolve will fail.
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "flux-kubeconfig", Namespace: "cp-my-mcp"},
+		Data:       map[string][]byte{"kubeconfig": []byte("not-valid")},
+	}
+	cl := fake.NewClientBuilder().WithScheme(sc).WithObjects(secret).Build()
+	resolver := mcpclient.NewResolver(cl)
+
+	_, err1 := resolver.Resolve(context.Background(), "my-mcp")
+	assert.Error(t, err1)
+
+	// Second call must also return an error — the first failure must not be cached.
+	_, err2 := resolver.Resolve(context.Background(), "my-mcp")
+	assert.Error(t, err2)
+}
