@@ -19,7 +19,7 @@ var GroupVersion = schema.GroupVersion{Group: "github.gitops.open-control-plane.
 var SchemeGroupVersion = GroupVersion
 
 // SchemeBuilder is used to add go types to the GroupVersionKind scheme.
-var SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
+var SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion} //nolint:staticcheck
 
 // AddToScheme adds the types in this group-version to the given scheme.
 var AddToScheme = SchemeBuilder.AddToScheme
