@@ -3,7 +3,6 @@ version: "3"
 includes:
   shared:
     taskfile: hack/common/Taskfile_controller.yaml
-    flatten: true
 
 vars:
   NESTED_MODULES: api
@@ -16,9 +15,22 @@ vars:
   GENERATE_DOCS_INDEX: "false"
 
 tasks:
-  generate:manifests:
-    desc: "Generate CRD manifests and patch openmcp.cloud/cluster labels"
-    run: once
+  # Shims so 'task generate/validate/test' still work without flatten: true.
+  # generate also patches openmcp.cloud/cluster labels back onto CRD manifests
+  # after controller-gen regenerates them (controller-gen strips all hand-edited
+  # metadata fields because it rm -rf the manifests dir before regenerating).
+  generate:
+    desc: "Run code/manifest generation and patch CRD cluster labels"
     cmds:
-    - task: generate:manifests-internal
+    - task: shared:generate
     - cmd: python3 "{{.ROOT_DIR}}/hack/patch-crd-labels.sh" "{{.MANIFEST_OUT}}"
+
+  validate:
+    desc: "Run validation checks"
+    cmds:
+    - task: shared:validate
+
+  test:
+    desc: "Run tests"
+    cmds:
+    - task: shared:test
