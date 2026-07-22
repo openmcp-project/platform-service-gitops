@@ -6,7 +6,6 @@ package github
 import (
 	"context"
 	"fmt"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -18,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	githubv1alpha1 "github.com/openmcp-project/platform-service-gitops/api/github/v1alpha1"
+	"github.com/openmcp-project/platform-service-gitops/internal/controllerconst"
 	"github.com/openmcp-project/platform-service-gitops/internal/credentials"
 )
 
@@ -103,5 +103,5 @@ func (r *GitHubInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	logger.Info("Reconciled GitHubInstance", "name", req.Name, "ready", status == metav1.ConditionTrue)
-	return ctrl.Result{RequeueAfter: 10 * time.Minute}, nil
+	return ctrl.Result{RequeueAfter: controllerconst.RequeueInterval}, nil
 }

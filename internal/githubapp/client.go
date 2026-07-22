@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v88/github"
@@ -60,16 +61,23 @@ func isPublic(url string) bool {
 	return h == "" || h == "github.com" || h == "api.github.com" || h == "www.github.com"
 }
 
+// requestTimeout bounds each GitHub call so a slow or hung instance cannot
+// block a reconciler goroutine indefinitely.
+const requestTimeout = 30 * time.Second
+
 // NewClient builds an App-authenticated client for the given credentials.
 // For Enterprise instances it configures both the go-github base URL and the
 // ghinstallation transport BaseURL so tokens are minted against the instance.
 func NewClient(creds Credentials) (*Client, error) {
-	atr, err := ghinstallation.NewAppsTransport(http.DefaultTransport, creds.AppID, creds.PrivateKey)
+	// Clone the default transport so each client has its own connection pool
+	// rather than sharing http.DefaultTransport across all reconcilers.
+	baseTransport := http.DefaultTransport.(*http.Transport).Clone()
+	atr, err := ghinstallation.NewAppsTransport(baseTransport, creds.AppID, creds.PrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("building app transport: %w", err)
 	}
 
-	httpClient := &http.Client{Transport: atr}
+	httpClient := &http.Client{Transport: atr, Timeout: requestTimeout}
 
 	if isPublic(creds.URL) {
 		gh, err := github.NewClient(github.WithHTTPClient(httpClient))

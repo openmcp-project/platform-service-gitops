@@ -6,7 +6,6 @@ package github
 import (
 	"context"
 	"fmt"
-	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -16,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	githubv1alpha1 "github.com/openmcp-project/platform-service-gitops/api/github/v1alpha1"
+	"github.com/openmcp-project/platform-service-gitops/internal/controllerconst"
 	"github.com/openmcp-project/platform-service-gitops/internal/credentials"
 	"github.com/openmcp-project/platform-service-gitops/internal/githubapp"
 )
@@ -29,10 +29,10 @@ const (
 	reasonAccessDenied  = "AccessDenied"
 	reasonInvalidSpec   = "InvalidSpec"
 	reasonInstanceError = "InstanceResolutionFailed"
-
-	// requeueInterval re-checks installation state, which can change out of band.
-	requeueInterval = 10 * time.Minute
 )
+
+// requeueInterval re-checks installation state, which can change out of band.
+const requeueInterval = controllerconst.RequeueInterval
 
 // AppInstallationReconciler reconciles AppInstallation objects. It resolves the
 // referenced GitHubInstance and its credential Secret, authenticates as the

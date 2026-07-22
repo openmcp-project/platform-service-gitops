@@ -6,7 +6,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -20,8 +19,7 @@ import (
 
 	corev1alpha1 "github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1"
 	githubv1alpha1 "github.com/openmcp-project/platform-service-gitops/api/github/v1alpha1"
-	"github.com/openmcp-project/platform-service-gitops/internal/credentials"
-	"github.com/openmcp-project/platform-service-gitops/internal/githubapp"
+	"github.com/openmcp-project/platform-service-gitops/internal/controllerconst"
 )
 
 const (
@@ -32,54 +30,28 @@ const (
 	reasonCredentialNotFound = "CredentialNotFound"
 	reasonAppNotInstalled    = "AppNotInstalled"
 	reasonUnsupportedKind    = "UnsupportedCredentialKind"
-	reasonAccessDenied       = "AccessDenied"
 
 	kindAppInstallation = "AppInstallation"
 
 	// appInstalledCondition is the condition on AppInstallation that must be True.
 	appInstalledCondition = "AppInstalled"
-
-	// requeueInterval re-checks resolution periodically, since it depends on the
-	// referenced AppInstallation's state which can change out of band.
-	requeueInterval = 10 * time.Minute
 )
 
 // GitRepositoryReconciler resolves a GitRepository's credentialRef to an
-// AppInstallation, mints a scoped installation token to prove access, and sets
-// the CredentialResolved/Ready conditions. The token is not persisted here;
-// pushing a scoped token to target MCPs is handled by the propagateTo flow.
+// AppInstallation and sets the CredentialResolved/Ready conditions based on the
+// AppInstallation's verified status. It does not mint tokens; token minting
+// happens only in the propagateTo flow where a token is actually used.
 //
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=github.gitops.open-control-plane.io,resources=appinstallations,verbs=get;list;watch
-// +kubebuilder:rbac:groups=github.gitops.open-control-plane.io,resources=githubinstances,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 type GitRepositoryReconciler struct {
-	client              client.Client
-	credentialNamespace string
-	newClient           func(githubapp.Credentials) (TokenMinter, error)
+	client client.Client
 }
 
-// TokenMinter is the subset of githubapp.Client used here, for test injection.
-type TokenMinter interface {
-	MintInstallationToken(ctx context.Context, installationID int64) (string, error)
-}
-
-// NewGitRepositoryReconciler creates a reconciler with the given client and
-// default credential namespace.
-func NewGitRepositoryReconciler(c client.Client, credentialNamespace string) *GitRepositoryReconciler {
-	return &GitRepositoryReconciler{
-		client:              c,
-		credentialNamespace: credentialNamespace,
-		newClient: func(creds githubapp.Credentials) (TokenMinter, error) {
-			return githubapp.NewClient(creds)
-		},
-	}
-}
-
-// SetTokenMinterFactory overrides the token-minter factory. Intended for tests.
-func (r *GitRepositoryReconciler) SetTokenMinterFactory(f func(githubapp.Credentials) (TokenMinter, error)) {
-	r.newClient = f
+// NewGitRepositoryReconciler creates a reconciler with the given client.
+func NewGitRepositoryReconciler(c client.Client) *GitRepositoryReconciler {
+	return &GitRepositoryReconciler{client: c}
 }
 
 // SetupWithManager registers the reconciler with the controller-runtime manager.
@@ -147,7 +119,7 @@ func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	logger.Info("Reconciled GitRepository", "name", req.Name, "credentialResolved", resolved)
-	return ctrl.Result{RequeueAfter: requeueInterval}, nil
+	return ctrl.Result{RequeueAfter: controllerconst.RequeueInterval}, nil
 }
 
 // resolveCredential resolves the credentialRef to an AppInstallation, verifies
@@ -176,37 +148,19 @@ func (r *GitRepositoryReconciler) resolveCredential(ctx context.Context, gr *cor
 		return false, reasonCredentialNotFound
 	}
 
-	// The AppInstallation must report the App as installed and expose an ID.
+	// The AppInstallation controller already verified App installation and
+	// access. Trusting its status avoids minting an installation token here:
+	// tokens are rate-limited (1 per installation per hour on GHE) and would be
+	// discarded, so minting on every reconcile would exhaust the quota. Token
+	// minting happens only where a token is actually used (the propagateTo flow).
 	if !meta.IsStatusConditionTrue(ai.Status.Conditions, appInstalledCondition) || ai.Status.InstallationID == 0 {
 		r.setResolved(gr, metav1.ConditionFalse, reasonAppNotInstalled,
 			fmt.Sprintf("AppInstallation %s is not ready (App not installed yet).", ref.Name))
 		return false, reasonAppNotInstalled
 	}
 
-	// Resolve credentials from the AppInstallation's GitHubInstance + secret.
-	creds, err := credentials.Resolve(ctx, r.client, ai.Spec.InstanceRef.Name, ai.Spec.CredentialName, r.credentialNamespace)
-	if err != nil {
-		r.setResolved(gr, metav1.ConditionFalse, reasonCredentialNotFound,
-			fmt.Sprintf("Resolving credentials for AppInstallation %s failed: %v.", ref.Name, err))
-		return false, reasonCredentialNotFound
-	}
-
-	// Mint a scoped installation token to prove access. The token is not stored
-	// or used here; propagation to MCPs is a separate flow.
-	gh, err := r.newClient(creds)
-	if err != nil {
-		r.setResolved(gr, metav1.ConditionFalse, reasonAccessDenied,
-			fmt.Sprintf("Building GitHub client failed: %v.", err))
-		return false, reasonAccessDenied
-	}
-	if _, err := gh.MintInstallationToken(ctx, ai.Status.InstallationID); err != nil {
-		r.setResolved(gr, metav1.ConditionFalse, reasonAccessDenied,
-			fmt.Sprintf("Minting installation token failed: %v.", err))
-		return false, reasonAccessDenied
-	}
-
 	r.setResolved(gr, metav1.ConditionTrue, reasonCredentialFound,
-		fmt.Sprintf("Resolved via AppInstallation %s (installation %d); scoped token minted.", ref.Name, ai.Status.InstallationID))
+		fmt.Sprintf("Resolved via AppInstallation %s (installation %d).", ref.Name, ai.Status.InstallationID))
 	return true, reasonCredentialFound
 }
 
