@@ -1,0 +1,10 @@
+# GitHubInstance (platform owner, cluster-scoped) — references the credential
+# Secret above. Name matches the Secret name in secretRefs.
+apiVersion: github.gitops.open-control-plane.io/v1alpha1
+kind: GitHubInstance
+metadata:
+  name: sap-ghe
+spec:
+  secretRefs:
+    - name: sap-ghe
+      # namespace defaults to the controller's --credential-namespace when omitted
