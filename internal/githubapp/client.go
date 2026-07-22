@@ -146,9 +146,45 @@ func installationResult(inst *github.Installation, resp *github.Response, err er
 // verify it can be minted; downstream use (e.g. pushing to an MCP as a Secret)
 // is handled elsewhere.
 func (c *Client) MintInstallationToken(ctx context.Context, installationID int64) (string, error) {
-	tok, _, err := c.gh.Apps.CreateInstallationToken(ctx, installationID, nil)
+	result, err := c.MintScopedToken(ctx, installationID, "")
 	if err != nil {
-		return "", fmt.Errorf("minting installation token: %w", err)
+		return "", err
 	}
-	return tok.GetToken(), nil
+	return result.Token, nil
+}
+
+// TokenResult holds the token value and its expiry as reported by GitHub.
+type TokenResult struct {
+	Token     string
+	ExpiresAt time.Time
+}
+
+// MintScopedToken creates a read-only installation token scoped to a single
+// repository. repoName is the repository name without the owner prefix (e.g.
+// "my-infra"). Passing an empty repoName creates an unscoped token.
+// The caller must use ExpiresAt to schedule rotation — GitHub sets this value
+// and it must never be assumed or hardcoded.
+func (c *Client) MintScopedToken(ctx context.Context, installationID int64, repoName string) (TokenResult, error) {
+	opts := &github.InstallationTokenOptions{}
+	if repoName != "" {
+		readOnly := "read"
+		opts.Repositories = []string{repoName}
+		opts.Permissions = &github.InstallationPermissions{
+			Contents: &readOnly,
+		}
+	}
+
+	tok, _, err := c.gh.Apps.CreateInstallationToken(ctx, installationID, opts)
+	if err != nil {
+		return TokenResult{}, fmt.Errorf("minting scoped token: %w", err)
+	}
+
+	var expiresAt time.Time
+	if tok.ExpiresAt != nil {
+		expiresAt = tok.ExpiresAt.Time
+	}
+	return TokenResult{
+		Token:     tok.GetToken(),
+		ExpiresAt: expiresAt,
+	}, nil
 }

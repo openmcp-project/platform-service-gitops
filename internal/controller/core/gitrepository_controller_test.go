@@ -5,6 +5,7 @@ package core_test
 
 import (
 	"context"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -17,6 +18,7 @@ import (
 	corev1alpha1 "github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1"
 	githubv1alpha1 "github.com/openmcp-project/platform-service-gitops/api/github/v1alpha1"
 	controller "github.com/openmcp-project/platform-service-gitops/internal/controller/core"
+	"github.com/openmcp-project/platform-service-gitops/internal/mcpaccess"
 )
 
 const (
@@ -24,6 +26,28 @@ const (
 	grNamespace  = "my-project"
 	instanceName = "sap-ghe"
 )
+
+// noopResolver is a test double that never resolves any MCP targets.
+type noopResolver struct{}
+
+func (noopResolver) Resolve(_ context.Context, _ *corev1alpha1.GitRepository, _ client.Client) ([]mcpaccess.ResolvedTarget, error) {
+	return nil, nil
+}
+
+func (noopResolver) Cleanup(_ context.Context, _ *corev1alpha1.GitRepository, _ string) error {
+	return nil
+}
+
+func newTestReconciler(cl client.Client) *controller.GitRepositoryReconciler {
+	return controller.NewGitRepositoryReconciler(
+		cl, // onboardingClient
+		cl, // platformClient (same fake in unit tests)
+		noopResolver{},
+		"platform-service-gitops-system",
+		"flux-system",
+		15*time.Minute,
+	)
+}
 
 func gitRepo(credName string) *corev1alpha1.GitRepository {
 	return &corev1alpha1.GitRepository{
@@ -69,10 +93,13 @@ func reconcileGR(objs []client.Object) *corev1alpha1.GitRepository {
 		}
 	}
 	cl := b.Build()
-	r := controller.NewGitRepositoryReconciler(cl)
-	_, err := r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: types.NamespacedName{Name: grName, Namespace: grNamespace},
-	})
+	r := newTestReconciler(cl)
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: grName, Namespace: grNamespace}}
+
+	// First reconcile adds the finalizer and requeues; second reconcile runs the full logic.
+	_, err := r.Reconcile(context.Background(), req)
+	Expect(err).NotTo(HaveOccurred())
+	_, err = r.Reconcile(context.Background(), req)
 	Expect(err).NotTo(HaveOccurred())
 
 	out := &corev1alpha1.GitRepository{}
@@ -84,7 +111,7 @@ var _ = Describe("GitRepositoryReconciler", func() {
 	Context("when the GitRepository does not exist", func() {
 		It("returns no error", func() {
 			cl := fake.NewClientBuilder().WithScheme(scheme).Build()
-			r := controller.NewGitRepositoryReconciler(cl)
+			r := newTestReconciler(cl)
 			result, err := r.Reconcile(context.Background(), ctrl.Request{
 				NamespacedName: types.NamespacedName{Name: "nope", Namespace: grNamespace},
 			})

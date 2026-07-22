@@ -28,15 +28,72 @@ type CredentialRef struct {
 	Group string `json:"group,omitempty"`
 }
 
-// PropagateTarget declares a ControlPlane that should receive scoped repository access.
+// PropagateTargetKind is the kind of resource a propagateTo entry refers to.
+// +kubebuilder:validation:Enum=ControlPlane
+type PropagateTargetKind string
+
+const (
+	// PropagateTargetKindControlPlane targets a ManagedControlPlane (MCP).
+	PropagateTargetKindControlPlane PropagateTargetKind = "ControlPlane"
+)
+
+// PropagateTarget declares a target (ControlPlane or future Workspace) that should
+// receive a scoped repository token and a Flux GitRepository resource.
+// Exactly one of name or matchLabels must be set.
+// +kubebuilder:validation:XValidation:rule="(has(self.name) && self.name != ”) != (has(self.matchLabels) && size(self.matchLabels) > 0)",message="exactly one of name or matchLabels must be set"
 type PropagateTarget struct {
 	// Kind of target. Currently only ControlPlane is supported.
 	// +kubebuilder:validation:Required
-	Kind string `json:"kind"`
+	Kind PropagateTargetKind `json:"kind"`
+
+	// Name is the explicit name of the target ControlPlane.
+	// Mutually exclusive with matchLabels.
 	// +optional
 	Name string `json:"name,omitempty"`
+
+	// MatchLabels selects ControlPlanes by label. All matching ControlPlanes in the
+	// GitRepository's namespace receive a token and Flux GitRepository.
+	// Mutually exclusive with name.
 	// +optional
 	MatchLabels map[string]string `json:"matchLabels,omitempty"`
+}
+
+// PropagatePhase describes the reconciliation state of a single propagateTo target.
+// +kubebuilder:validation:Enum=Pending;Ready;TokenFailed;FluxFailed;Conflict
+type PropagatePhase string
+
+const (
+	PropagatePhasePending     PropagatePhase = "Pending"
+	PropagatePhaseReady       PropagatePhase = "Ready"
+	PropagatePhaseTokenFailed PropagatePhase = "TokenFailed"
+	PropagatePhaseFluxFailed  PropagatePhase = "FluxFailed"
+	// PropagatePhaseConflict means a Flux GitRepository with the same name already
+	// exists in the MCP without our managed-by annotation; we will not overwrite it.
+	PropagatePhaseConflict PropagatePhase = "Conflict"
+)
+
+// PropagateStatus holds the per-MCP reconciliation state for one resolved propagateTo target.
+type PropagateStatus struct {
+	// ControlPlaneName is the name of the ControlPlane this entry refers to.
+	// +kubebuilder:validation:Required
+	ControlPlaneName string `json:"controlPlaneName"`
+
+	// Phase summarises the current reconciliation state for this target.
+	// +optional
+	Phase PropagatePhase `json:"phase,omitempty"`
+
+	// Reason is a machine-readable reason code for the current phase.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+
+	// Message is a human-readable description of the current phase.
+	// +optional
+	Message string `json:"message,omitempty"`
+
+	// TokenExpiresAt is the expiry time of the currently active installation token.
+	// The controller rotates the token before this time based on the configured renew buffer.
+	// +optional
+	TokenExpiresAt *metav1.Time `json:"tokenExpiresAt,omitempty"`
 }
 
 // GitRepositorySpec defines the desired state of GitRepository.
@@ -59,9 +116,9 @@ type GitRepositorySpec struct {
 	// +kubebuilder:validation:Required
 	CredentialRef CredentialRef `json:"credentialRef"`
 
-	// PropagateToControlPlanes lists ControlPlanes that should receive a
-	// scoped token and a Flux GitRepository resource for this source.
-	// Behaviour implemented in a follow-up issue.
+	// PropagateToControlPlanes lists ControlPlanes (or future Workspaces) that should
+	// receive a scoped token and a Flux GitRepository resource for this source.
+	// Each entry may specify an explicit name or a matchLabels selector, but not both.
 	// +optional
 	PropagateToControlPlanes []PropagateTarget `json:"propagateTo,omitempty"`
 }
@@ -73,11 +130,17 @@ type GitRepositoryStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
 	// Conditions summarise the current state.
-	// Known types: Ready, CredentialResolved.
+	// Known condition types: Ready, CredentialResolved.
 	// +optional
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// Propagated holds per-MCP status for each resolved entry in spec.propagateTo.
+	// +optional
+	// +listType=map
+	// +listMapKey=controlPlaneName
+	Propagated []PropagateStatus `json:"propagated,omitempty"`
 }
 
 // +kubebuilder:object:root=true
