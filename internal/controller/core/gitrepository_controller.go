@@ -54,9 +54,12 @@ const (
 	finalizerPropagate = "gitops.open-control-plane.io/propagate"
 )
 
-// GitRepositoryReconciler resolves a GitRepository's credentialRef, syncs scoped
-// tokens and Flux GitRepository resources into each MCP listed in propagateTo,
-// and keeps per-MCP status up to date.
+// GitRepositoryReconciler resolves a GitRepository's credentialRef and reports
+// readiness. For kind:AppInstallation it additionally syncs scoped tokens and
+// Flux GitRepository resources into each MCP listed in propagateTo and keeps
+// per-MCP status up to date. For kind:Secret it validates the user-supplied
+// credential against the repository on the onboarding cluster only; the Secret
+// path does not propagate (propagation requires per-MCP scoped App tokens).
 //
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories/status,verbs=get;update;patch
