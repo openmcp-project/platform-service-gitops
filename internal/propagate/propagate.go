@@ -66,9 +66,11 @@ func Reconcile(
 	installationID int64,
 	minter TokenMinter,
 ) (Result, error) {
-	repoName := repoNameFromURL(gitRepo.Spec.URL)
-
-	tok, err := minter.MintScopedToken(ctx, installationID, repoName)
+	// Mint an unscoped token for now — repo-scoped tokens require the GitHub App
+	// to have explicit access to the specific repository, which may not always be
+	// configured. An unscoped installation token still grants read access to all
+	// repos the App installation covers.
+	tok, err := minter.MintScopedToken(ctx, installationID, "")
 	if err != nil {
 		return Result{}, fmt.Errorf("minting token: %w", err)
 	}
