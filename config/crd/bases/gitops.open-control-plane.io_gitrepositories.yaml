@@ -63,6 +63,12 @@ spec:
                     default: ""
                     type: string
                   kind:
+                    description: |-
+                      Kind of credential provider. Supported values: AppInstallation (platform
+                      GitHub App) and Secret (user-provided PAT or SSH key).
+                    enum:
+                    - AppInstallation
+                    - Secret
                     type: string
                   name:
                     type: string
