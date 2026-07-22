@@ -139,7 +139,7 @@ func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	patch := client.MergeFrom(gr.DeepCopy())
 
 	// Resolve credential.
-	installationID, resolved, reason := r.resolveCredential(ctx, gr)
+	ai, installationID, resolved, reason := r.resolveCredential(ctx, gr)
 
 	if !resolved {
 		setCondition(&gr.Status.Conditions, metav1.Condition{
@@ -157,7 +157,7 @@ func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Propagate to MCPs.
-	requeueAfter := r.reconcilePropagate(ctx, gr, installationID)
+	requeueAfter := r.reconcilePropagate(ctx, gr, ai, installationID)
 
 	setCondition(&gr.Status.Conditions, metav1.Condition{
 		Type:               condReady,
@@ -181,7 +181,7 @@ func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 // reconcilePropagate iterates over all propagateTo targets, resolves MCP access,
 // syncs the token Secret + Flux GitRepository, updates per-target status, and
 // returns the earliest token rotation deadline across all targets.
-func (r *GitRepositoryReconciler) reconcilePropagate(ctx context.Context, gr *corev1alpha1.GitRepository, installationID int64) time.Duration {
+func (r *GitRepositoryReconciler) reconcilePropagate(ctx context.Context, gr *corev1alpha1.GitRepository, ai *githubv1alpha1.AppInstallation, installationID int64) time.Duration {
 	logger := log.FromContext(ctx)
 
 	targets, err := r.mcpResolver.Resolve(ctx, gr, r.onboardingClient)
@@ -191,7 +191,7 @@ func (r *GitRepositoryReconciler) reconcilePropagate(ctx context.Context, gr *co
 	}
 
 	// Build creds + minter once for all targets (same AppInstallation for all).
-	creds, err := r.resolveGitHubCreds(ctx, gr)
+	creds, err := r.resolveGitHubCreds(ctx, ai)
 	if err != nil {
 		logger.Error(err, "failed to resolve GitHub credentials for propagation")
 		return controllerconst.RequeueInterval
@@ -301,17 +301,25 @@ func (r *GitRepositoryReconciler) reconcileDelete(ctx context.Context, gr *corev
 		return ctrl.Result{RequeueAfter: controllerconst.RequeueInterval}, fmt.Errorf("resolving targets for cleanup: %w", err)
 	}
 
+	var cleanupErrs []error
 	for _, target := range targets {
 		// Always clean up the AccessRequest, regardless of whether cluster access was granted.
 		if err := r.mcpResolver.Cleanup(ctx, gr, target.ControlPlaneName); err != nil {
 			logger.Error(err, "AccessRequest cleanup failed", "controlPlane", target.ControlPlaneName)
+			cleanupErrs = append(cleanupErrs, err)
 		}
 		if target.Cluster == nil {
 			continue
 		}
 		if err := propagate.Cleanup(ctx, target.Cluster.Client(), gr, r.fluxNamespace); err != nil {
 			logger.Error(err, "MCP resource cleanup failed", "controlPlane", target.ControlPlaneName)
+			cleanupErrs = append(cleanupErrs, err)
 		}
+	}
+
+	if len(cleanupErrs) > 0 {
+		return ctrl.Result{RequeueAfter: controllerconst.RequeueInterval},
+			fmt.Errorf("cleanup incomplete (%d errors), will retry", len(cleanupErrs))
 	}
 
 	controllerutil.RemoveFinalizer(gr, finalizerPropagate)
@@ -322,14 +330,15 @@ func (r *GitRepositoryReconciler) reconcileDelete(ctx context.Context, gr *corev
 }
 
 // resolveCredential resolves the credentialRef to an AppInstallation and returns
-// the installation ID, whether resolution succeeded, and a reason code.
-func (r *GitRepositoryReconciler) resolveCredential(ctx context.Context, gr *corev1alpha1.GitRepository) (int64, bool, string) {
+// the AppInstallation, its installation ID, whether resolution succeeded, and a reason code.
+// The AppInstallation is returned so callers can reuse it without a second fetch.
+func (r *GitRepositoryReconciler) resolveCredential(ctx context.Context, gr *corev1alpha1.GitRepository) (*githubv1alpha1.AppInstallation, int64, bool, string) {
 	ref := gr.Spec.CredentialRef
 
 	if ref.Kind != kindAppInstallation {
 		r.setResolved(gr, metav1.ConditionFalse, reasonUnsupportedKind,
 			fmt.Sprintf("credentialRef.kind %q is not supported; only %q is.", ref.Kind, kindAppInstallation))
-		return 0, false, reasonUnsupportedKind
+		return nil, 0, false, reasonUnsupportedKind
 	}
 
 	ai := &githubv1alpha1.AppInstallation{}
@@ -337,31 +346,27 @@ func (r *GitRepositoryReconciler) resolveCredential(ctx context.Context, gr *cor
 		if apierrors.IsNotFound(err) {
 			r.setResolved(gr, metav1.ConditionFalse, reasonCredentialNotFound,
 				fmt.Sprintf("AppInstallation %s not found in namespace %s.", ref.Name, gr.Namespace))
-			return 0, false, reasonCredentialNotFound
+			return nil, 0, false, reasonCredentialNotFound
 		}
 		r.setResolved(gr, metav1.ConditionFalse, reasonCredentialNotFound,
 			fmt.Sprintf("Fetching AppInstallation %s failed: %v.", ref.Name, err))
-		return 0, false, reasonCredentialNotFound
+		return nil, 0, false, reasonCredentialNotFound
 	}
 
 	if !meta.IsStatusConditionTrue(ai.Status.Conditions, appInstalledCondition) || ai.Status.InstallationID == 0 {
 		r.setResolved(gr, metav1.ConditionFalse, reasonAppNotInstalled,
 			fmt.Sprintf("AppInstallation %s is not ready (App not installed yet).", ref.Name))
-		return 0, false, reasonAppNotInstalled
+		return nil, 0, false, reasonAppNotInstalled
 	}
 
 	r.setResolved(gr, metav1.ConditionTrue, reasonCredentialFound,
 		fmt.Sprintf("Resolved via AppInstallation %s (installation %d).", ref.Name, ai.Status.InstallationID))
-	return ai.Status.InstallationID, true, reasonCredentialFound
+	return ai, ai.Status.InstallationID, true, reasonCredentialFound
 }
 
 // resolveGitHubCreds resolves the full GitHub App credentials for token minting.
-func (r *GitRepositoryReconciler) resolveGitHubCreds(ctx context.Context, gr *corev1alpha1.GitRepository) (githubapp.Credentials, error) {
-	ref := gr.Spec.CredentialRef
-	ai := &githubv1alpha1.AppInstallation{}
-	if err := r.onboardingClient.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: gr.Namespace}, ai); err != nil {
-		return githubapp.Credentials{}, fmt.Errorf("fetching AppInstallation: %w", err)
-	}
+// It reuses the already-fetched AppInstallation to avoid a second fetch (TOCTOU).
+func (r *GitRepositoryReconciler) resolveGitHubCreds(ctx context.Context, ai *githubv1alpha1.AppInstallation) (githubapp.Credentials, error) {
 	return credentials.Resolve(ctx, r.platformClient, ai.Spec.InstanceRef.Name, "", r.credentialNamespace)
 }
 

@@ -123,12 +123,11 @@ func initCommand(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to initialize platform cluster: %w", err)
 	}
 	providerName, _ := cmd.Flags().GetString("provider-name")
-	runInit(platformCluster, providerName)
+	runInit(ctrl.SetupSignalHandler(), platformCluster, providerName)
 	return nil
 }
 
-func runInit(platformCluster *clusters.Cluster, providerName string) {
-	ctx := context.Background()
+func runInit(ctx context.Context, platformCluster *clusters.Cluster, providerName string) {
 	logger.Info("Running init")
 
 	clusterAccessMgr := clusteraccess.NewClusterAccessManager(
