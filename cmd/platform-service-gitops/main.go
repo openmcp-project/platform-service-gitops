@@ -23,11 +23,14 @@ import (
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 
 	"github.com/openmcp-project/controller-utils/pkg/clusters"
+	crdutil "github.com/openmcp-project/controller-utils/pkg/crds"
 	"github.com/openmcp-project/controller-utils/pkg/logging"
 	clustersv1alpha1 "github.com/openmcp-project/openmcp-operator/api/clusters/v1alpha1"
 	openmcpconsts "github.com/openmcp-project/openmcp-operator/api/constants"
 	"github.com/openmcp-project/openmcp-operator/lib/clusteraccess"
+	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
+	"github.com/openmcp-project/platform-service-gitops/api/crds"
 	"github.com/openmcp-project/platform-service-gitops/internal/controller/core"
 	githubcontroller "github.com/openmcp-project/platform-service-gitops/internal/controller/github"
 	"github.com/openmcp-project/platform-service-gitops/internal/mcpaccess"
@@ -53,7 +56,14 @@ func main() {
 	addCommonFlags(runCmd)
 	addServerFlags(runCmd)
 
-	rootCmd.AddCommand(runCmd)
+	initCmd := &cobra.Command{
+		Use:   "init",
+		Short: "Install CRDs onto the platform and onboarding clusters",
+		RunE:  initCommand,
+	}
+	initCmd.Flags().String("provider-name", "", "Name of this service provider (used to register GVKs).")
+
+	rootCmd.AddCommand(runCmd, initCmd)
 
 	var err error
 	logger, err = logging.GetLogger()
@@ -99,6 +109,64 @@ func initializePlatformCluster() (*clusters.Cluster, error) {
 		return nil, fmt.Errorf("failed to initialize platform cluster client: %w", err)
 	}
 	return platformCluster, nil
+}
+
+// +kubebuilder:rbac:groups=clusters.openmcp.cloud,resources=clusterrequests,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=clusters.openmcp.cloud,resources=accessrequests,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;update;patch
+func initCommand(cmd *cobra.Command, _ []string) error {
+	platformCluster, err := initializePlatformCluster()
+	if err != nil {
+		return fmt.Errorf("failed to initialize platform cluster: %w", err)
+	}
+	providerName, _ := cmd.Flags().GetString("provider-name")
+	runInit(platformCluster, providerName)
+	return nil
+}
+
+func runInit(platformCluster *clusters.Cluster, providerName string) {
+	ctx := context.Background()
+	logger.Info("Running init")
+
+	clusterAccessMgr := clusteraccess.NewClusterAccessManager(
+		platformCluster.Client(), controllerName, os.Getenv(openmcpconsts.EnvVariablePodNamespace),
+	).WithLogger(&logger).
+		WithInterval(10 * time.Second).
+		WithTimeout(30 * time.Minute)
+
+	onboardingCluster, err := clusterAccessMgr.CreateAndWaitForCluster(ctx, "onboarding-init",
+		clustersv1alpha1.PURPOSE_ONBOARDING, scheme.Onboarding,
+		[]clustersv1alpha1.PermissionsRequest{
+			{Rules: []rbacv1.PolicyRule{{
+				APIGroups: []string{"*"}, Resources: []string{"*"}, Verbs: []string{"*"},
+			}}},
+		})
+	if err != nil {
+		logger.Error(err, "Failed to obtain onboarding cluster for init")
+		return
+	}
+
+	crdList, err := crds.CRDs()
+	if err != nil {
+		logger.Error(err, "Failed to load CRDs")
+		return
+	}
+
+	crdMgr := crdutil.NewCRDManager(openmcpconsts.ClusterLabel, func() ([]*apiextv1.CustomResourceDefinition, error) {
+		return crdList, nil
+	})
+	crdMgr.AddCRDLabelToClusterMapping(clustersv1alpha1.PURPOSE_PLATFORM, platformCluster)
+	crdMgr.AddCRDLabelToClusterMapping(clustersv1alpha1.PURPOSE_ONBOARDING, onboardingCluster)
+
+	if err := crdMgr.CreateOrUpdateCRDs(ctx, &logger); err != nil {
+		logger.Error(err, "Failed to create or update CRDs")
+	}
+
+	if providerName != "" {
+		logger.Info("Skipping GVK registration — providerName flag not yet wired to ServiceProvider object")
+	}
+
+	logger.Info("Init complete")
 }
 
 // nolint:gocyclo
@@ -193,8 +261,9 @@ func runCommand(cmd *cobra.Command, _ []string) error {
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "4f40d865.openmcp.cloud",
+		LeaderElection:          enableLeaderElection,
+		LeaderElectionID:        "4f40d865.openmcp.cloud",
+		LeaderElectionNamespace: "default",
 	})
 	if err != nil {
 		return fmt.Errorf("unable to start manager: %w", err)
