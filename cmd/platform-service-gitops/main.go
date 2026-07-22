@@ -219,6 +219,11 @@ func runCommand(cmd *cobra.Command, _ []string) error {
 					},
 					{
 						APIGroups: []string{"gitops.open-control-plane.io"},
+						Resources: []string{"gitrepositories", "kustomizations"},
+						Verbs:     []string{"update", "patch"},
+					},
+					{
+						APIGroups: []string{"gitops.open-control-plane.io"},
 						Resources: []string{"gitrepositories/status", "kustomizations/status"},
 						Verbs:     []string{"get", "update", "patch"},
 					},
