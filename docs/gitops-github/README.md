@@ -84,7 +84,90 @@ kubectl apply -f docs/gitops-github/examples/gitrepository.yaml
 The controller resolves the `AppInstallation`, mints a scoped installation token
 to prove access (the token is not stored here), and sets `Ready=True`.
 
-## Status quick reference
+## Token propagation to MCP clusters (`propagateTo`)
+
+When a `GitRepository` lists one or more managed control planes (MCPs) in
+`spec.propagateToControlPlanes`, the controller mints a scoped GitHub App
+installation token and writes it as a `kubernetes.io/basic-auth` Secret into
+each target MCP cluster under the `flux-system` namespace. Flux uses this
+Secret for authenticated repository access.
+
+### How cluster access works
+
+The controller follows the openmcp `AccessRequest` protocol to obtain a
+client for each MCP cluster:
+
+```
+GitRepository.spec.propagateToControlPlanes
+        │  (one entry per MCP)
+        ▼
+AccessRequest CR on the platform cluster
+  namespace: mcp--<uuid>   (stable hash of GitRepository name + namespace)
+  name:      <controller>--<gr-name>--<mcp-name>
+        │
+        │  ClusterProvider operator grants it, writes kubeconfig Secret
+        ▼
+Secret  (platform cluster, same namespace as AccessRequest)
+  data["kubeconfig"] → cross-cluster kubeconfig for the MCP
+        │
+        ▼
+Token Secret written to MCP cluster
+  namespace: flux-system
+  name:      gitrepository-<gr-namespace>-<gr-name>
+  type:      kubernetes.io/basic-auth
+  data:
+    username: x-access-token
+    password: <GitHub App installation token>
+```
+
+The token is valid for ~1 hour. The controller requeues before expiry and
+rotates the token proactively (15-minute rotation window).
+
+### Cluster topology
+
+The controller is designed as an openmcp service provider and assumes:
+
+- **Platform cluster** — where `AccessRequest` CRs are created (typically
+  the cluster the controller runs on).
+- **Onboarding cluster** — where `GitRepository` CRs live (same cluster in
+  the default deployment).
+
+Both are wired from `ctrl.GetConfigOrDie()` at startup.
+
+### RBAC on the platform cluster
+
+The controller's service account needs:
+
+```yaml
+- apiGroups: [clusters.openmcp.cloud]
+  resources: [accessrequests, clusterrequests]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [clusters.openmcp.cloud]
+  resources: [accessrequests/finalizers, clusterrequests/finalizers]
+  verbs: [update, patch]
+- apiGroups: [""]
+  resources: [namespaces]
+  verbs: [get, create]
+```
+
+The `AccessRequest` grants the controller `cluster-admin` on each MCP cluster
+(sufficient for writing the token Secret and any future Flux resources).
+
+### Per-MCP status
+
+`GitRepository.status.propagateStatus` has one entry per MCP:
+
+| Phase | Meaning |
+|-------|---------|
+| `TokenSynced` | Secret written; `tokenExpiresAt` set |
+| `Error` | Token mint or write failed; `message` has details |
+
+Entries are removed when the MCP is removed from `propagateTo`. The Secret in
+the MCP cluster is deleted on removal (best-effort, via the AccessRequest
+client). The `AccessRequest` CRs are cleaned up via a finalizer on deletion of
+the `GitRepository`.
+
+
 
 | Resource | Condition | Meaning |
 |----------|-----------|---------|

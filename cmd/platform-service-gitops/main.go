@@ -37,6 +37,8 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
+	clustersv1alpha1 "github.com/openmcp-project/openmcp-operator/api/clusters/v1alpha1"
+	"github.com/openmcp-project/controller-utils/pkg/clusters"
 
 	corev1alpha1 "github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1"
 	githubv1alpha1 "github.com/openmcp-project/platform-service-gitops/api/github/v1alpha1"
@@ -57,6 +59,7 @@ func init() {
 	utilruntime.Must(githubv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(kustomizev1.AddToScheme(scheme))
 	utilruntime.Must(sourcev1.AddToScheme(scheme))
+	utilruntime.Must(clustersv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -165,7 +168,21 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	cfg := ctrl.GetConfigOrDie()
+
+	platformCluster := clusters.New("platform").WithRESTConfig(cfg)
+	if err := platformCluster.InitializeClient(scheme); err != nil {
+		setupLog.Error(err, "Failed to initialize platform cluster client")
+		os.Exit(1)
+	}
+
+	onboardingCluster := clusters.New("onboarding").WithRESTConfig(cfg)
+	if err := onboardingCluster.InitializeClient(scheme); err != nil {
+		setupLog.Error(err, "Failed to initialize onboarding cluster client")
+		os.Exit(1)
+	}
+
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
@@ -189,7 +206,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := core.NewGitRepositoryReconciler(mgr.GetClient(), credentialNamespace).SetupWithManager(mgr); err != nil {
+	if err := core.NewGitRepositoryReconciler(platformCluster, onboardingCluster, credentialNamespace).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "core-gitrepository")
 		os.Exit(1)
 	}

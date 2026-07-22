@@ -13,6 +13,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
+	clustersv1alpha1 "github.com/openmcp-project/openmcp-operator/api/clusters/v1alpha1"
+
 	corev1alpha1 "github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1"
 	githubv1alpha1 "github.com/openmcp-project/platform-service-gitops/api/github/v1alpha1"
 )
@@ -31,4 +33,5 @@ var _ = BeforeSuite(func() {
 	Expect(corev1.AddToScheme(scheme)).To(Succeed())
 	Expect(kustomizev1.AddToScheme(scheme)).To(Succeed())
 	Expect(sourcev1.AddToScheme(scheme)).To(Succeed())
+	Expect(clustersv1alpha1.AddToScheme(scheme)).To(Succeed())
 })

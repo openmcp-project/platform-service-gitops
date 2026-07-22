@@ -13,7 +13,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -21,12 +23,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
+	"github.com/openmcp-project/controller-utils/pkg/clusters"
+	clustersv1alpha1 "github.com/openmcp-project/openmcp-operator/api/clusters/v1alpha1"
+	commonapi "github.com/openmcp-project/openmcp-operator/api/common"
+	"github.com/openmcp-project/openmcp-operator/lib/clusteraccess/advanced"
+
 	corev1alpha1 "github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1"
 	githubv1alpha1 "github.com/openmcp-project/platform-service-gitops/api/github/v1alpha1"
 	"github.com/openmcp-project/platform-service-gitops/internal/controllerconst"
 	"github.com/openmcp-project/platform-service-gitops/internal/credentials"
 	"github.com/openmcp-project/platform-service-gitops/internal/githubapp"
-	"github.com/openmcp-project/platform-service-gitops/internal/mcpclient"
 )
 
 const (
@@ -45,49 +51,61 @@ const (
 
 	tokenRotationWindow = 15 * time.Minute
 	fluxSecretNamespace = "flux-system"
+
+	controllerName   = "platform-service-gitops.openmcp.cloud"
+	finalizerMCPAccess = "platform-service-gitops.openmcp.cloud/mcp-access"
 )
+
+// mcpScheme is the scheme used when building clients for MCP clusters.
+// Only corev1 is needed — we write Secrets there.
+var mcpScheme = func() *runtime.Scheme {
+	s := runtime.NewScheme()
+	utilruntime.Must(corev1.AddToScheme(s))
+	return s
+}()
 
 // TokenMinter mints a GitHub App installation token.
 type TokenMinter interface {
 	MintInstallationToken(ctx context.Context, installationID int64) (string, error)
 }
 
-// MCPClientResolver resolves a PropagateTarget name to a client.Client for that cluster.
-type MCPClientResolver interface {
-	Resolve(ctx context.Context, mcpName string) (client.Client, error)
-}
-
 // GitRepositoryReconciler resolves a GitRepository's credentialRef to an
 // AppInstallation and sets the CredentialResolved/Ready conditions based on the
 // AppInstallation's verified status. When credentials are resolved and
 // PropagateToControlPlanes is non-empty, it mints scoped GitHub App installation
-// tokens and writes them as Secrets into each target MCP cluster.
+// tokens and writes them as Secrets into each target MCP cluster via the
+// AccessRequest protocol (openmcp-operator/lib/clusteraccess).
 //
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=github.gitops.open-control-plane.io,resources=appinstallations,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=clusters.openmcp.cloud,resources=accessrequests;clusterrequests,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=clusters.openmcp.cloud,resources=accessrequests/finalizers;clusterrequests/finalizers,verbs=update;patch
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;create
 type GitRepositoryReconciler struct {
-	client              client.Client
+	platformCluster     *clusters.Cluster
+	onboardingCluster   *clusters.Cluster
 	credentialNamespace string
 	newClient           func(githubapp.Credentials) (TokenMinter, error)
-	mcpResolver         MCPClientResolver
+	clusterAccessRec    advanced.ClusterAccessReconciler
 	resolveCredentials  func(ctx context.Context, ai *githubv1alpha1.AppInstallation) (githubapp.Credentials, error)
 }
 
-// NewGitRepositoryReconciler creates a reconciler with the given client and
-// credential namespace (used to resolve GitHubInstance credential Secrets).
-func NewGitRepositoryReconciler(c client.Client, credentialNamespace string) *GitRepositoryReconciler {
+// NewGitRepositoryReconciler creates a reconciler with the given platform cluster
+// (where AccessRequests are created) and onboarding cluster (where GitRepository
+// CRs live), plus the credential namespace for GitHub App secrets.
+func NewGitRepositoryReconciler(platform, onboarding *clusters.Cluster, credentialNamespace string) *GitRepositoryReconciler {
 	r := &GitRepositoryReconciler{
-		client:              c,
+		platformCluster:     platform,
+		onboardingCluster:   onboarding,
 		credentialNamespace: credentialNamespace,
 		newClient: func(creds githubapp.Credentials) (TokenMinter, error) {
 			return githubapp.NewClient(creds)
 		},
 	}
-	r.mcpResolver = mcpclient.NewResolver(c)
 	r.resolveCredentials = func(ctx context.Context, ai *githubv1alpha1.AppInstallation) (githubapp.Credentials, error) {
-		return credentials.Resolve(ctx, c, ai.Spec.InstanceRef.Name, ai.Spec.CredentialName, credentialNamespace)
+		return credentials.Resolve(ctx, onboarding.Client(), ai.Spec.InstanceRef.Name, ai.Spec.CredentialName, credentialNamespace)
 	}
 	return r
 }
@@ -98,9 +116,9 @@ func (r *GitRepositoryReconciler) SetTokenMinterFactory(f func(githubapp.Credent
 	r.newClient = f
 }
 
-// SetMCPClientResolver replaces the MCPClientResolver. Intended for testing only.
-func (r *GitRepositoryReconciler) SetMCPClientResolver(res MCPClientResolver) {
-	r.mcpResolver = res
+// SetClusterAccessReconciler replaces the ClusterAccessReconciler. Intended for testing only.
+func (r *GitRepositoryReconciler) SetClusterAccessReconciler(rec advanced.ClusterAccessReconciler) {
+	r.clusterAccessRec = rec
 }
 
 // SetCredentialResolver replaces the credential resolution function. Intended for testing only.
@@ -109,9 +127,12 @@ func (r *GitRepositoryReconciler) SetCredentialResolver(f func(ctx context.Conte
 }
 
 // SetupWithManager registers the reconciler with the controller-runtime manager.
-// It also watches AppInstallations so a GitRepository re-reconciles when the
-// AppInstallation it references becomes installed (or changes).
 func (r *GitRepositoryReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.clusterAccessRec = advanced.NewClusterAccessReconciler(
+		r.platformCluster.Client(),
+		controllerName,
+	).WithRetryInterval(10 * time.Second)
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.GitRepository{}).
 		Watches(&githubv1alpha1.AppInstallation{}, handler.EnqueueRequestsFromMapFunc(r.mapAppInstallationToGitRepositories)).
@@ -122,7 +143,7 @@ func (r *GitRepositoryReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // GitRepository in the AppInstallation's namespace that references it.
 func (r *GitRepositoryReconciler) mapAppInstallationToGitRepositories(ctx context.Context, obj client.Object) []reconcile.Request {
 	list := &corev1alpha1.GitRepositoryList{}
-	if err := r.client.List(ctx, list, client.InNamespace(obj.GetNamespace())); err != nil {
+	if err := r.onboardingCluster.Client().List(ctx, list, client.InNamespace(obj.GetNamespace())); err != nil {
 		return nil
 	}
 	var reqs []reconcile.Request
@@ -139,11 +160,25 @@ func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	logger := log.FromContext(ctx)
 
 	gr := &corev1alpha1.GitRepository{}
-	if err := r.client.Get(ctx, req.NamespacedName, gr); err != nil {
+	if err := r.onboardingCluster.Client().Get(ctx, req.NamespacedName, gr); err != nil {
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, fmt.Errorf("fetching GitRepository: %w", err)
+	}
+
+	// Deletion path: clean up AccessRequests then remove our finalizer.
+	if !gr.DeletionTimestamp.IsZero() {
+		return r.reconcileDelete(ctx, req, gr)
+	}
+
+	// Ensure our finalizer is present so we can clean up AccessRequests on deletion.
+	if !controllerutil.ContainsFinalizer(gr, finalizerMCPAccess) {
+		controllerutil.AddFinalizer(gr, finalizerMCPAccess)
+		if err := r.onboardingCluster.Client().Update(ctx, gr); err != nil {
+			return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
+		}
+		return ctrl.Result{Requeue: true}, nil
 	}
 
 	patch := client.MergeFrom(gr.DeepCopy())
@@ -169,11 +204,24 @@ func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	var requeueAfter time.Duration
 	if len(gr.Spec.PropagateToControlPlanes) > 0 || len(gr.Status.PropagateStatus) > 0 {
-		requeueAfter = r.syncTokens(ctx, gr, resolved, installationID)
+		var requeue bool
+		var err error
+		requeueAfter, requeue, err = r.syncTokens(ctx, req, gr, resolved, installationID)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if requeue {
+			// AccessRequests are still pending — patch status and requeue.
+			gr.Status.ObservedGeneration = gr.Generation
+			if pErr := r.onboardingCluster.Client().Status().Patch(ctx, gr, patch); pErr != nil {
+				return ctrl.Result{}, fmt.Errorf("patching status: %w", pErr)
+			}
+			return ctrl.Result{RequeueAfter: requeueAfter}, nil
+		}
 	}
 
 	gr.Status.ObservedGeneration = gr.Generation
-	if err := r.client.Status().Patch(ctx, gr, patch); err != nil {
+	if err := r.onboardingCluster.Client().Status().Patch(ctx, gr, patch); err != nil {
 		return ctrl.Result{}, fmt.Errorf("patching status: %w", err)
 	}
 
@@ -182,6 +230,29 @@ func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: requeueAfter}, nil
 	}
 	return ctrl.Result{RequeueAfter: controllerconst.RequeueInterval}, nil
+}
+
+func (r *GitRepositoryReconciler) reconcileDelete(ctx context.Context, req ctrl.Request, gr *corev1alpha1.GitRepository) (ctrl.Result, error) {
+	// Unregister all MCP targets so ReconcileDelete cleans up their AccessRequests.
+	for _, t := range gr.Status.PropagateStatus {
+		r.clusterAccessRec.Unregister(t.Name)
+	}
+	// Re-register current spec targets (needed if status is stale).
+	r.registerMCPs(gr)
+
+	res, err := r.clusterAccessRec.ReconcileDelete(ctx, req)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("deleting AccessRequests: %w", err)
+	}
+	if res.RequeueAfter > 0 {
+		return ctrl.Result{RequeueAfter: res.RequeueAfter}, nil
+	}
+
+	controllerutil.RemoveFinalizer(gr, finalizerMCPAccess)
+	if err := r.onboardingCluster.Client().Update(ctx, gr); err != nil {
+		return ctrl.Result{}, fmt.Errorf("removing finalizer: %w", err)
+	}
+	return ctrl.Result{}, nil
 }
 
 // resolveCredential resolves the credentialRef to an AppInstallation, verifies
@@ -196,9 +267,8 @@ func (r *GitRepositoryReconciler) resolveCredential(ctx context.Context, gr *cor
 		return false, reasonUnsupportedKind, 0
 	}
 
-	// AppInstallation is referenced by name in the same namespace as the GitRepository.
 	ai := &githubv1alpha1.AppInstallation{}
-	if err := r.client.Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: gr.Namespace}, ai); err != nil {
+	if err := r.onboardingCluster.Client().Get(ctx, types.NamespacedName{Name: ref.Name, Namespace: gr.Namespace}, ai); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.setResolved(gr, metav1.ConditionFalse, reasonCredentialNotFound,
 				fmt.Sprintf("AppInstallation %s not found in namespace %s.", ref.Name, gr.Namespace))
@@ -242,16 +312,37 @@ func setCondition(conditions *[]metav1.Condition, c metav1.Condition) {
 	meta.SetStatusCondition(conditions, c)
 }
 
+// registerMCPs registers each propagateTo target with the clusterAccessRec.
+// Each MCP gets an ExistingClusterRequest registration keyed by its name.
+func (r *GitRepositoryReconciler) registerMCPs(gr *corev1alpha1.GitRepository) {
+	token := &clustersv1alpha1.TokenConfig{
+		RoleRefs: []commonapi.RoleRef{{Kind: "ClusterRole", Name: "cluster-admin"}},
+	}
+	for _, target := range gr.Spec.PropagateToControlPlanes {
+		name := target.Name
+		r.clusterAccessRec.Register(
+			advanced.ExistingClusterRequest(name, name, func(req reconcile.Request, _ ...any) (*commonapi.ObjectReference, error) {
+				return &commonapi.ObjectReference{Name: req.Name, Namespace: req.Namespace}, nil
+			}).
+				WithNamespaceGenerator(advanced.DefaultNamespaceGeneratorForMCP).
+				WithTokenAccess(token).
+				WithScheme(mcpScheme).
+				Build(),
+		)
+	}
+}
+
 // syncTokens ensures a scoped installation token Secret exists and is fresh in
-// every target MCP cluster. It also cleans up Secrets for MCPs that have been
-// removed from the spec. It returns the duration until the earliest token
-// rotation is needed (so the reconciler can requeue before expiry).
+// every target MCP cluster. It returns the duration until the earliest token
+// rotation is needed, a bool indicating whether AccessRequests are still
+// pending (caller should requeue), and any error.
 func (r *GitRepositoryReconciler) syncTokens(
 	ctx context.Context,
+	req ctrl.Request,
 	gr *corev1alpha1.GitRepository,
 	resolved bool,
 	installationID int64,
-) time.Duration {
+) (time.Duration, bool, error) {
 	logger := log.FromContext(ctx)
 
 	statusByName := make(map[string]*corev1alpha1.MCPPropagateState, len(gr.Status.PropagateStatus))
@@ -264,19 +355,50 @@ func (r *GitRepositoryReconciler) syncTokens(
 		specNames[t.Name] = true
 	}
 
-	// Clean up Secrets for MCPs that are no longer in the spec.
-	for _, st := range gr.Status.PropagateStatus {
-		if !specNames[st.Name] {
-			if err := r.deleteTokenSecret(ctx, gr, st.Name); err != nil {
-				logger.Error(err, "failed to delete token Secret for removed MCP", "mcp", st.Name)
-			}
-		}
-	}
-
 	// When credentials are not resolved we can only clean up — do not mint new tokens.
 	if !resolved {
 		gr.Status.PropagateStatus = nil
-		return 0
+		return 0, false, nil
+	}
+
+	// Register all current spec targets plus any removed ones still in status
+	// (so their AccessRequests can be used to delete Secrets before cleanup).
+	r.registerMCPs(gr)
+	for _, st := range gr.Status.PropagateStatus {
+		if !specNames[st.Name] {
+			name := st.Name
+			r.clusterAccessRec.Register(
+				advanced.ExistingClusterRequest(name, name, func(req reconcile.Request, _ ...any) (*commonapi.ObjectReference, error) {
+					return &commonapi.ObjectReference{Name: req.Name, Namespace: req.Namespace}, nil
+				}).
+					WithNamespaceGenerator(advanced.DefaultNamespaceGeneratorForMCP).
+					WithTokenAccess(&clustersv1alpha1.TokenConfig{
+						RoleRefs: []commonapi.RoleRef{{Kind: "ClusterRole", Name: "cluster-admin"}},
+					}).
+					WithScheme(mcpScheme).
+					Build(),
+			)
+		}
+	}
+
+	// Drive AccessRequest lifecycle for all registered MCPs (spec + removed).
+	arResult, err := r.clusterAccessRec.Reconcile(ctx, reconcile.Request(req))
+	if err != nil {
+		return 0, false, fmt.Errorf("reconciling AccessRequests: %w", err)
+	}
+	if arResult.RequeueAfter > 0 {
+		// Some AccessRequests are still pending — requeue and wait.
+		return arResult.RequeueAfter, true, nil
+	}
+
+	// All AccessRequests are granted. Delete Secrets for removed MCPs, then unregister.
+	for _, st := range gr.Status.PropagateStatus {
+		if !specNames[st.Name] {
+			if err := r.deleteTokenSecret(ctx, req, st.Name); err != nil {
+				logger.Error(err, "failed to delete token Secret for removed MCP", "mcp", st.Name)
+			}
+			r.clusterAccessRec.Unregister(st.Name)
+		}
 	}
 
 	var newStatus []corev1alpha1.MCPPropagateState
@@ -284,7 +406,7 @@ func (r *GitRepositoryReconciler) syncTokens(
 
 	for _, target := range gr.Spec.PropagateToControlPlanes {
 		existing := statusByName[target.Name]
-		st := r.syncOneMCP(ctx, gr, target, existing, installationID)
+		st := r.syncOneMCP(ctx, req, gr, target, existing, installationID)
 		newStatus = append(newStatus, st)
 
 		if st.TokenExpiresAt != nil {
@@ -296,11 +418,12 @@ func (r *GitRepositoryReconciler) syncTokens(
 	}
 
 	gr.Status.PropagateStatus = newStatus
-	return earliestExpiry
+	return earliestExpiry, false, nil
 }
 
 func (r *GitRepositoryReconciler) syncOneMCP(
 	ctx context.Context,
+	req ctrl.Request,
 	gr *corev1alpha1.GitRepository,
 	target corev1alpha1.PropagateTarget,
 	existing *corev1alpha1.MCPPropagateState,
@@ -317,9 +440,9 @@ func (r *GitRepositoryReconciler) syncOneMCP(
 		return *existing
 	}
 
-	mcpClient, err := r.mcpResolver.Resolve(ctx, target.Name)
+	mcpCluster, err := r.clusterAccessRec.Access(ctx, reconcile.Request(req), target.Name)
 	if err != nil {
-		logger.Error(err, "failed to resolve MCP client", "mcp", target.Name)
+		logger.Error(err, "failed to get MCP cluster access", "mcp", target.Name)
 		return corev1alpha1.MCPPropagateState{
 			Name:    target.Name,
 			Phase:   corev1alpha1.TokenSyncPhaseError,
@@ -328,7 +451,7 @@ func (r *GitRepositoryReconciler) syncOneMCP(
 	}
 
 	ai := &githubv1alpha1.AppInstallation{}
-	if err := r.client.Get(ctx, types.NamespacedName{Name: gr.Spec.CredentialRef.Name, Namespace: gr.Namespace}, ai); err != nil {
+	if err := r.onboardingCluster.Client().Get(ctx, types.NamespacedName{Name: gr.Spec.CredentialRef.Name, Namespace: gr.Namespace}, ai); err != nil {
 		return corev1alpha1.MCPPropagateState{
 			Name:    target.Name,
 			Phase:   corev1alpha1.TokenSyncPhaseError,
@@ -366,7 +489,7 @@ func (r *GitRepositoryReconciler) syncOneMCP(
 	expiry := metav1.NewTime(time.Now().Add(1 * time.Hour))
 	secretName := tokenSecretName(gr)
 
-	if err := r.writeTokenSecret(ctx, mcpClient, secretName, gr, token); err != nil {
+	if err := r.writeTokenSecret(ctx, mcpCluster.Client(), secretName, gr, token); err != nil {
 		return corev1alpha1.MCPPropagateState{
 			Name:    target.Name,
 			Phase:   corev1alpha1.TokenSyncPhaseError,
@@ -440,20 +563,22 @@ func (r *GitRepositoryReconciler) writeTokenSecret(
 
 func (r *GitRepositoryReconciler) deleteTokenSecret(
 	ctx context.Context,
-	gr *corev1alpha1.GitRepository,
+	req ctrl.Request,
 	mcpName string,
 ) error {
-	mcpClient, err := r.mcpResolver.Resolve(ctx, mcpName)
+	mcpCluster, err := r.clusterAccessRec.Access(ctx, reconcile.Request(req), mcpName)
 	if err != nil {
 		return fmt.Errorf("resolving MCP client: %w", err)
 	}
 	secret := &corev1.Secret{}
-	name := tokenSecretName(gr)
-	if err := mcpClient.Get(ctx, types.NamespacedName{Name: name, Namespace: fluxSecretNamespace}, secret); err != nil {
+	name := tokenSecretName(&corev1alpha1.GitRepository{
+		ObjectMeta: metav1.ObjectMeta{Name: req.Name, Namespace: req.Namespace},
+	})
+	if err := mcpCluster.Client().Get(ctx, types.NamespacedName{Name: name, Namespace: fluxSecretNamespace}, secret); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("fetching Secret %s/%s: %w", fluxSecretNamespace, name, err)
 	}
-	return mcpClient.Delete(ctx, secret)
+	return mcpCluster.Client().Delete(ctx, secret)
 }
