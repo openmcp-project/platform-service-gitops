@@ -177,11 +177,7 @@ func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	var requeueAfter time.Duration
 	if len(gr.Spec.PropagateToControlPlanes) > 0 || len(gr.Status.PropagateStatus) > 0 {
-		nextRotation, err := r.syncTokens(ctx, gr, resolved, installationID)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		requeueAfter = nextRotation
+		requeueAfter = r.syncTokens(ctx, gr, resolved, installationID)
 	}
 
 	gr.Status.ObservedGeneration = gr.Generation
@@ -263,7 +259,7 @@ func (r *GitRepositoryReconciler) syncTokens(
 	gr *corev1alpha1.GitRepository,
 	resolved bool,
 	installationID int64,
-) (time.Duration, error) {
+) time.Duration {
 	logger := log.FromContext(ctx)
 
 	statusByName := make(map[string]*corev1alpha1.MCPPropagateState, len(gr.Status.PropagateStatus))
@@ -288,7 +284,7 @@ func (r *GitRepositoryReconciler) syncTokens(
 	// When credentials are not resolved we can only clean up — do not mint new tokens.
 	if !resolved {
 		gr.Status.PropagateStatus = nil
-		return 0, nil
+		return 0
 	}
 
 	var newStatus []corev1alpha1.MCPPropagateState
@@ -308,7 +304,7 @@ func (r *GitRepositoryReconciler) syncTokens(
 	}
 
 	gr.Status.PropagateStatus = newStatus
-	return earliestExpiry, nil
+	return earliestExpiry
 }
 
 func (r *GitRepositoryReconciler) syncOneMCP(

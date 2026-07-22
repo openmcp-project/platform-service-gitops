@@ -26,19 +26,22 @@ import (
 )
 
 const (
-	grName       = "my-infra"
-	grNamespace  = "my-project"
-	instanceName = "sap-ghe"
+	grName              = "my-infra"
+	grNamespace         = "my-project"
+	instanceName        = "sap-ghe"
+	testMCPName         = "my-mcp"
+	testCredName        = "my-connection"
+	fluxSecretNamespace = "flux-system"
 )
 
-func gitRepo(credName string) *corev1alpha1.GitRepository {
+func gitRepo() *corev1alpha1.GitRepository {
 	return &corev1alpha1.GitRepository{
 		ObjectMeta: metav1.ObjectMeta{Name: grName, Namespace: grNamespace},
 		Spec: corev1alpha1.GitRepositorySpec{
 			URL: "https://github.tools.sap/my-org/my-infra",
 			Ref: corev1alpha1.GitRef{Branch: "main"},
 			CredentialRef: corev1alpha1.CredentialRef{
-				Name:  credName,
+				Name:  testCredName,
 				Kind:  "AppInstallation",
 				Group: "github.gitops.open-control-plane.io",
 			},
@@ -118,7 +121,7 @@ func newMCPFakeClient() client.Client {
 }
 
 func gitRepoWithPropagate(mcpNames ...string) *corev1alpha1.GitRepository {
-	gr := gitRepo("my-connection")
+	gr := gitRepo()
 	for _, n := range mcpNames {
 		gr.Spec.PropagateToControlPlanes = append(gr.Spec.PropagateToControlPlanes,
 			corev1alpha1.PropagateTarget{Kind: "ControlPlane", Name: n})
@@ -189,7 +192,7 @@ var _ = Describe("GitRepositoryReconciler", func() {
 
 	Context("when the referenced AppInstallation is missing", func() {
 		It("sets CredentialResolved=False / CredentialNotFound and Ready=False", func() {
-			out := reconcileGR([]client.Object{gitRepo("my-connection")})
+			out := reconcileGR([]client.Object{gitRepo()})
 			cred := findCondition(out.Status.Conditions, "CredentialResolved")
 			Expect(cred.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cred.Reason).To(Equal("CredentialNotFound"))
@@ -203,7 +206,7 @@ var _ = Describe("GitRepositoryReconciler", func() {
 			ai := installedAppInstallation()
 			ai.Status.InstallationID = 0
 			ai.Status.Conditions[0].Status = metav1.ConditionFalse
-			out := reconcileGR([]client.Object{gitRepo("my-connection"), ai})
+			out := reconcileGR([]client.Object{gitRepo(), ai})
 			cred := findCondition(out.Status.Conditions, "CredentialResolved")
 			Expect(cred.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cred.Reason).To(Equal("AppNotInstalled"))
@@ -212,7 +215,7 @@ var _ = Describe("GitRepositoryReconciler", func() {
 
 	Context("when the AppInstallation reports the App as installed", func() {
 		It("sets CredentialResolved=True and Ready=True", func() {
-			out := reconcileGR([]client.Object{gitRepo("my-connection"), installedAppInstallation()})
+			out := reconcileGR([]client.Object{gitRepo(), installedAppInstallation()})
 			cred := findCondition(out.Status.Conditions, "CredentialResolved")
 			Expect(cred.Status).To(Equal(metav1.ConditionTrue))
 			Expect(cred.Reason).To(Equal("CredentialResolved"))
@@ -225,10 +228,10 @@ var _ = Describe("GitRepositoryReconciler", func() {
 		It("writes a BasicAuth Secret into the MCP cluster", func() {
 			minter := &fakeMinter{token: "ghs_test_token"}
 			mcpFake := newMCPFakeClient()
-			resolver := &fakeMCPResolver{clients: map[string]client.Client{"my-mcp": mcpFake}}
+			resolver := &fakeMCPResolver{clients: map[string]client.Client{testMCPName: mcpFake}}
 
 			out := reconcileGRWithMCPResolver(
-				[]client.Object{gitRepoWithPropagate("my-mcp"), installedAppInstallation()},
+				[]client.Object{gitRepoWithPropagate(testMCPName), installedAppInstallation()},
 				resolver, minter,
 			)
 
@@ -236,7 +239,7 @@ var _ = Describe("GitRepositoryReconciler", func() {
 			Expect(mcpFake.Get(context.Background(),
 				types.NamespacedName{
 					Name:      fmt.Sprintf("gitrepository-%s-%s", grNamespace, grName),
-					Namespace: "flux-system",
+					Namespace: fluxSecretNamespace,
 				},
 				secret)).To(Succeed())
 			Expect(secret.Data["password"]).To(Equal([]byte("ghs_test_token")))
@@ -251,12 +254,12 @@ var _ = Describe("GitRepositoryReconciler", func() {
 		It("does not re-mint when the existing token is still valid", func() {
 			minter := &fakeMinter{token: "ghs_fresh"}
 			mcpFake := newMCPFakeClient()
-			resolver := &fakeMCPResolver{clients: map[string]client.Client{"my-mcp": mcpFake}}
+			resolver := &fakeMCPResolver{clients: map[string]client.Client{testMCPName: mcpFake}}
 
-			gr := gitRepoWithPropagate("my-mcp")
+			gr := gitRepoWithPropagate(testMCPName)
 			validExpiry := metav1.NewTime(time.Now().Add(30 * time.Minute))
 			gr.Status.PropagateStatus = []corev1alpha1.MCPPropagateState{
-				{Name: "my-mcp", Phase: corev1alpha1.TokenSyncPhaseTokenSynced, TokenExpiresAt: &validExpiry},
+				{Name: testMCPName, Phase: corev1alpha1.TokenSyncPhaseTokenSynced, TokenExpiresAt: &validExpiry},
 			}
 
 			reconcileGRWithMCPResolver(
@@ -270,12 +273,12 @@ var _ = Describe("GitRepositoryReconciler", func() {
 		It("rotates the token when expiry is within tokenRotationWindow", func() {
 			minter := &fakeMinter{token: "ghs_rotated"}
 			mcpFake := newMCPFakeClient()
-			resolver := &fakeMCPResolver{clients: map[string]client.Client{"my-mcp": mcpFake}}
+			resolver := &fakeMCPResolver{clients: map[string]client.Client{testMCPName: mcpFake}}
 
-			gr := gitRepoWithPropagate("my-mcp")
+			gr := gitRepoWithPropagate(testMCPName)
 			expiringSoon := metav1.NewTime(time.Now().Add(10 * time.Minute))
 			gr.Status.PropagateStatus = []corev1alpha1.MCPPropagateState{
-				{Name: "my-mcp", Phase: corev1alpha1.TokenSyncPhaseTokenSynced, TokenExpiresAt: &expiringSoon},
+				{Name: testMCPName, Phase: corev1alpha1.TokenSyncPhaseTokenSynced, TokenExpiresAt: &expiringSoon},
 			}
 
 			reconcileGRWithMCPResolver(
@@ -289,7 +292,7 @@ var _ = Describe("GitRepositoryReconciler", func() {
 			Expect(mcpFake.Get(context.Background(),
 				types.NamespacedName{
 					Name:      fmt.Sprintf("gitrepository-%s-%s", grNamespace, grName),
-					Namespace: "flux-system",
+					Namespace: fluxSecretNamespace,
 				},
 				secret)).To(Succeed())
 			Expect(secret.Data["password"]).To(Equal([]byte("ghs_rotated")))
@@ -302,12 +305,12 @@ var _ = Describe("GitRepositoryReconciler", func() {
 			existingSecret := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      fmt.Sprintf("gitrepository-%s-%s", grNamespace, grName),
-					Namespace: "flux-system",
+					Namespace: fluxSecretNamespace,
 				},
 			}
 			Expect(mcpFake.Create(context.Background(), existingSecret)).To(Succeed())
 
-			gr := gitRepo("my-connection")
+			gr := gitRepo()
 			gr.Status.PropagateStatus = []corev1alpha1.MCPPropagateState{
 				{Name: "old-mcp", Phase: corev1alpha1.TokenSyncPhaseTokenSynced},
 			}
@@ -321,7 +324,7 @@ var _ = Describe("GitRepositoryReconciler", func() {
 			err := mcpFake.Get(context.Background(),
 				types.NamespacedName{
 					Name:      fmt.Sprintf("gitrepository-%s-%s", grNamespace, grName),
-					Namespace: "flux-system",
+					Namespace: fluxSecretNamespace,
 				},
 				deleted)
 			Expect(apierrors.IsNotFound(err)).To(BeTrue())
