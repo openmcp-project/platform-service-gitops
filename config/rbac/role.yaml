@@ -30,3 +30,31 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - github.gitops.open-control-plane.io
+  resources:
+  - appinstallations
+  - githubinstances
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - github.gitops.open-control-plane.io
+  resources:
+  - appinstallations/status
+  - githubinstances/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch

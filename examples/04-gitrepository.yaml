@@ -1,0 +1,17 @@
+# GitRepository (end user, Project namespace) — references the AppInstallation
+# via credentialRef. The controller resolves credentials and mints a scoped
+# token to verify access.
+apiVersion: gitops.open-control-plane.io/v1alpha1
+kind: GitRepository
+metadata:
+  name: gitops-hackaton-test
+  namespace: my-project
+spec:
+  url: https://github.tools.sap/cloud-orchestration/gitops-hackaton-test
+  ref:
+    branch: main
+  path: ./
+  credentialRef:
+    name: my-connection            # -> the AppInstallation above
+    kind: AppInstallation
+    group: github.gitops.open-control-plane.io

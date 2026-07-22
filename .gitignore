@@ -34,3 +34,7 @@ go.work.sum
 # Build artifacts
 bin/
 platform-service-gitops
+
+# Superpowers working docs (never commit)
+docs/superpowers/
+

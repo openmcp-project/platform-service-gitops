@@ -1,0 +1,16 @@
+# AppInstallation — created by the end user in their Project namespace.
+# References the platform-managed GitHubInstance; no credentials here.
+apiVersion: github.gitops.open-control-plane.io/v1alpha1
+kind: AppInstallation
+metadata:
+  labels:
+    app.kubernetes.io/name: platform-service-gitops
+    app.kubernetes.io/managed-by: kustomize
+  name: my-connection
+  namespace: my-project
+spec:
+  instanceRef:
+    name: sap-ghe
+  # credentialName: sap-ghe   # optional when the instance lists exactly one secret
+  org: cloud-orchestration
+  # user: D067641             # alternative to org (exactly one required)

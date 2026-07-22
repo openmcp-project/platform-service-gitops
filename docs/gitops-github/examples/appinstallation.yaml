@@ -1,0 +1,14 @@
+# End user: AppInstallation in the Project namespace.
+# References the platform-managed GitHubInstance; no credentials here.
+# The user must have installed the platform's GitHub App into this org first.
+apiVersion: github.gitops.open-control-plane.io/v1alpha1
+kind: AppInstallation
+metadata:
+  name: my-connection
+  namespace: my-project
+spec:
+  instanceRef:
+    name: sap-ghe
+  # credentialName: sap-ghe   # optional when the instance lists exactly one secret
+  org: cloud-orchestration
+  # user: some-user           # alternative to org (exactly one required)

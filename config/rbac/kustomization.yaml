@@ -22,6 +22,12 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the platform-service-gitops itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- github_appinstallation_admin_role.yaml
+- github_appinstallation_editor_role.yaml
+- github_appinstallation_viewer_role.yaml
+- github_githubinstance_admin_role.yaml
+- github_githubinstance_editor_role.yaml
+- github_githubinstance_viewer_role.yaml
 - core_gitrepository_admin_role.yaml
 - core_gitrepository_editor_role.yaml
 - core_gitrepository_viewer_role.yaml

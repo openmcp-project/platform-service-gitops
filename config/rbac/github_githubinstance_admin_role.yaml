@@ -1,0 +1,27 @@
+# This rule is not used by the project platform-service-gitops itself.
+# It is provided to allow the cluster admin to help manage permissions for users.
+#
+# Grants full permissions ('*') over github.openmcp.cloud.
+# This role is intended for users authorized to modify roles and bindings within the cluster,
+# enabling them to delegate specific permissions to other users or groups as needed.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: platform-service-gitops
+    app.kubernetes.io/managed-by: kustomize
+  name: github-githubinstance-admin-role
+rules:
+- apiGroups:
+  - github.openmcp.cloud
+  resources:
+  - githubinstances
+  verbs:
+  - '*'
+- apiGroups:
+  - github.openmcp.cloud
+  resources:
+  - githubinstances/status
+  verbs:
+  - get

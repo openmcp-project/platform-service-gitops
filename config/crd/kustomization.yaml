@@ -3,6 +3,8 @@
 # It should be run by config/default
 resources:
 - bases/gitops.open-control-plane.io_gitrepositories.yaml
+- bases/github.gitops.open-control-plane.io_githubinstances.yaml
+- bases/github.gitops.open-control-plane.io_appinstallations.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

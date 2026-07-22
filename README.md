@@ -12,6 +12,35 @@
 - kubectl version v1.11.3+.
 - Access to a Kubernetes v1.11.3+ cluster.
 
+### Local testing with kind
+
+For a quick local inner-loop, [hack/dev.mk](hack/dev.mk) spins up a disposable
+kind cluster, installs the CRDs, seeds the sample resources, and runs the
+controller out-of-cluster against it:
+
+```sh
+make -f hack/dev.mk dev          # create cluster, install CRDs, seed samples, run controller
+make -f hack/dev.mk dev-seed     # (re)apply the sample Secret + CRs only
+make -f hack/dev.mk dev-clean    # delete the kind cluster
+```
+
+The seeded credential Secret carries a placeholder key. To test against a real
+GitHub App, create the Secret from a real `.pem` instead (see
+[docs/gitops-github](docs/gitops-github/README.md)):
+
+```sh
+kubectl -n platform-service-gitops-system create secret generic sap-ghe \
+  --from-literal=appID=<APP_ID> \
+  --from-literal=url=https://github.tools.sap \
+  --from-file=privateKey=./app-private-key.pem
+```
+
+### Connecting a Project to GitHub
+
+See [docs/gitops-github](docs/gitops-github/README.md) for the platform-owner
+and end-user setup of `GitHubInstance`, `AppInstallation` and `GitRepository`.
+
+
 ### To Deploy on the cluster
 **Build and push your image to the location specified by `IMG`:**
 
