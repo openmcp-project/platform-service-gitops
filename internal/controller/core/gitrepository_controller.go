@@ -5,6 +5,7 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"time"
 
@@ -175,8 +176,8 @@ func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	var requeueAfter time.Duration
-	if resolved && (len(gr.Spec.PropagateToControlPlanes) > 0 || len(gr.Status.PropagateStatus) > 0) {
-		nextRotation, err := r.syncTokens(ctx, gr, installationID)
+	if len(gr.Spec.PropagateToControlPlanes) > 0 || len(gr.Status.PropagateStatus) > 0 {
+		nextRotation, err := r.syncTokens(ctx, gr, resolved, installationID)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -260,6 +261,7 @@ func setCondition(conditions *[]metav1.Condition, c metav1.Condition) {
 func (r *GitRepositoryReconciler) syncTokens(
 	ctx context.Context,
 	gr *corev1alpha1.GitRepository,
+	resolved bool,
 	installationID int64,
 ) (time.Duration, error) {
 	logger := log.FromContext(ctx)
@@ -281,6 +283,12 @@ func (r *GitRepositoryReconciler) syncTokens(
 				logger.Error(err, "failed to delete token Secret for removed MCP", "mcp", st.Name)
 			}
 		}
+	}
+
+	// When credentials are not resolved we can only clean up — do not mint new tokens.
+	if !resolved {
+		gr.Status.PropagateStatus = nil
+		return 0, nil
 	}
 
 	var newStatus []corev1alpha1.MCPPropagateState
@@ -321,7 +329,7 @@ func (r *GitRepositoryReconciler) syncOneMCP(
 		return *existing
 	}
 
-	mcpClient, err := r.mcpResolver.Resolve(ctx, gr.Namespace, target.Name)
+	mcpClient, err := r.mcpResolver.Resolve(ctx, r.credentialNamespace, target.Name)
 	if err != nil {
 		logger.Error(err, "failed to resolve MCP client", "mcp", target.Name)
 		return corev1alpha1.MCPPropagateState{
@@ -388,7 +396,14 @@ func (r *GitRepositoryReconciler) syncOneMCP(
 }
 
 func tokenSecretName(gr *corev1alpha1.GitRepository) string {
-	return fmt.Sprintf("gitrepository-%s-%s", gr.Namespace, gr.Name)
+	name := fmt.Sprintf("gitrepository-%s-%s", gr.Namespace, gr.Name)
+	if len(name) <= 253 {
+		return name
+	}
+	// Namespace+name combination exceeds the 253-char Kubernetes name limit.
+	// Fall back to a deterministic hash so the name is always valid.
+	h := fmt.Sprintf("%x", sha256.Sum256([]byte(name)))
+	return "gitrepository-" + h[:16]
 }
 
 func (r *GitRepositoryReconciler) writeTokenSecret(
@@ -402,18 +417,27 @@ func (r *GitRepositoryReconciler) writeTokenSecret(
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: fluxSecretNamespace,
-			Labels: map[string]string{
-				"gitops.open-control-plane.io/source-namespace": gr.Namespace,
-				"gitops.open-control-plane.io/source-name":      gr.Name,
-			},
 		},
 	}
 	_, err := controllerutil.CreateOrUpdate(ctx, mcpClient, secret, func() error {
+		if secret.Labels == nil {
+			secret.Labels = make(map[string]string)
+		}
+		secret.Labels["gitops.open-control-plane.io/source-namespace"] = gr.Namespace
+		secret.Labels["gitops.open-control-plane.io/source-name"] = gr.Name
 		if secret.Data == nil {
 			secret.Data = make(map[string][]byte)
 		}
 		secret.Data["username"] = []byte("x-access-token")
 		secret.Data["password"] = []byte(token)
+		// Secret.Type is immutable once set. If the existing Secret has a different
+		// type (e.g. Opaque), delete it and let CreateOrUpdate recreate it.
+		if secret.Type != "" && secret.Type != corev1.SecretTypeBasicAuth {
+			if delErr := mcpClient.Delete(ctx, secret); delErr != nil && !apierrors.IsNotFound(delErr) {
+				return fmt.Errorf("deleting Secret with wrong type: %w", delErr)
+			}
+			secret.ResourceVersion = ""
+		}
 		secret.Type = corev1.SecretTypeBasicAuth
 		return nil
 	})
@@ -425,7 +449,7 @@ func (r *GitRepositoryReconciler) deleteTokenSecret(
 	gr *corev1alpha1.GitRepository,
 	mcpName string,
 ) error {
-	mcpClient, err := r.mcpResolver.Resolve(ctx, gr.Namespace, mcpName)
+	mcpClient, err := r.mcpResolver.Resolve(ctx, r.credentialNamespace, mcpName)
 	if err != nil {
 		return fmt.Errorf("resolving MCP client: %w", err)
 	}
