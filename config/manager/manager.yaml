@@ -57,9 +57,34 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+      - name: init-crds
+        command:
+        - /manager
+        - init
+        image: controller:latest
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - "ALL"
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        resources:
+          limits:
+            cpu: 200m
+            memory: 64Mi
+          requests:
+            cpu: 10m
+            memory: 32Mi
       containers:
       - command:
         - /manager
+        - run
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
