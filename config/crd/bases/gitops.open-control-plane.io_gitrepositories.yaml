@@ -186,6 +186,42 @@ spec:
                   was computed from.
                 format: int64
                 type: integer
+              propagateStatus:
+                description: PropagateStatus records the per-MCP token-sync state.
+                items:
+                  description: MCPPropagateState records the token-sync state for
+                    one target MCP.
+                  properties:
+                    message:
+                      description: Message is a human-readable explanation of the
+                        current phase.
+                      type: string
+                    name:
+                      description: Name is the name of the target ControlPlane.
+                      minLength: 1
+                      type: string
+                    phase:
+                      default: Pending
+                      description: Phase is the current sync phase for this MCP.
+                      enum:
+                      - Pending
+                      - TokenSynced
+                      - Error
+                      type: string
+                    tokenExpiresAt:
+                      description: |-
+                        TokenExpiresAt is when the current token expires. Absent when no token has
+                        been synced yet.
+                      format: date-time
+                      type: string
+                  required:
+                  - name
+                  - phase
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
             type: object
         type: object
     served: true
