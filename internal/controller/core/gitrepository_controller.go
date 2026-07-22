@@ -53,6 +53,9 @@ const (
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories/finalizers,verbs=update
 // +kubebuilder:rbac:groups=github.gitops.open-control-plane.io,resources=appinstallations,verbs=get;list;watch
+// +kubebuilder:rbac:groups=clusters.openmcp.cloud,resources=clusterrequests,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=clusters.openmcp.cloud,resources=accessrequests,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;update;patch
 type GitRepositoryReconciler struct {
 	// onboardingClient reads GitRepository and AppInstallation from the onboarding cluster.
 	onboardingClient client.Client
