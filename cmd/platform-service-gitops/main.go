@@ -37,8 +37,8 @@ import (
 
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
-	clustersv1alpha1 "github.com/openmcp-project/openmcp-operator/api/clusters/v1alpha1"
 	"github.com/openmcp-project/controller-utils/pkg/clusters"
+	clustersv1alpha1 "github.com/openmcp-project/openmcp-operator/api/clusters/v1alpha1"
 
 	corev1alpha1 "github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1"
 	githubv1alpha1 "github.com/openmcp-project/platform-service-gitops/api/github/v1alpha1"
@@ -206,7 +206,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := core.NewGitRepositoryReconciler(platformCluster, onboardingCluster, credentialNamespace).SetupWithManager(mgr); err != nil {
+	grReconciler := core.NewGitRepositoryReconciler(platformCluster, onboardingCluster, credentialNamespace)
+	if err := grReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "core-gitrepository")
 		os.Exit(1)
 	}

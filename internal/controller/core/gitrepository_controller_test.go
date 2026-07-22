@@ -101,7 +101,7 @@ func reconcileGR(objs []client.Object) *corev1alpha1.GitRepository {
 	r.SetClusterAccessReconciler(advanced.NewClusterAccessReconciler(cl, "test"))
 
 	// Reconcile twice: first pass adds the finalizer (returns Requeue:true), second does the work.
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		_, err := r.Reconcile(context.Background(), ctrl.Request{
 			NamespacedName: types.NamespacedName{Name: grName, Namespace: grNamespace},
 		})
@@ -225,7 +225,7 @@ func reconcileGRWithClusterAccess(
 	//   (status update not yet observed in this pass).
 	// - Pass 3: AccessRequests now granted; arResult.RequeueAfter==0; syncTokens runs.
 	// - Pass 4: stable (token already synced, no re-mint needed unless rotation window).
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err = r.Reconcile(context.Background(), req)
 		Expect(err).NotTo(HaveOccurred())
 	}

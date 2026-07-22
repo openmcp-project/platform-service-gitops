@@ -52,7 +52,7 @@ const (
 	tokenRotationWindow = 15 * time.Minute
 	fluxSecretNamespace = "flux-system"
 
-	controllerName   = "platform-service-gitops.openmcp.cloud"
+	controllerName     = "platform-service-gitops.openmcp.cloud"
 	finalizerMCPAccess = "platform-service-gitops.openmcp.cloud/mcp-access"
 )
 
@@ -370,7 +370,7 @@ func (r *GitRepositoryReconciler) syncTokens(
 	}
 
 	// Drive AccessRequest lifecycle for all registered MCPs (spec + removed).
-	arResult, err := r.clusterAccessRec.Reconcile(ctx, reconcile.Request(req))
+	arResult, err := r.clusterAccessRec.Reconcile(ctx, req)
 	if err != nil {
 		return 0, false, fmt.Errorf("reconciling AccessRequests: %w", err)
 	}
@@ -428,7 +428,7 @@ func (r *GitRepositoryReconciler) syncOneMCP(
 		return *existing
 	}
 
-	mcpCluster, err := r.clusterAccessRec.Access(ctx, reconcile.Request(req), target.Name)
+	mcpCluster, err := r.clusterAccessRec.Access(ctx, req, target.Name)
 	if err != nil {
 		logger.Error(err, "failed to get MCP cluster access", "mcp", target.Name)
 		return corev1alpha1.MCPPropagateState{
@@ -554,7 +554,7 @@ func (r *GitRepositoryReconciler) deleteTokenSecret(
 	req ctrl.Request,
 	mcpName string,
 ) error {
-	mcpCluster, err := r.clusterAccessRec.Access(ctx, reconcile.Request(req), mcpName)
+	mcpCluster, err := r.clusterAccessRec.Access(ctx, req, mcpName)
 	if err != nil {
 		return fmt.Errorf("resolving MCP client: %w", err)
 	}
