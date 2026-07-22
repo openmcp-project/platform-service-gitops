@@ -233,12 +233,11 @@ func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 }
 
 func (r *GitRepositoryReconciler) reconcileDelete(ctx context.Context, req ctrl.Request, gr *corev1alpha1.GitRepository) (ctrl.Result, error) {
-	// Unregister all MCP targets so ReconcileDelete cleans up their AccessRequests.
-	for _, t := range gr.Status.PropagateStatus {
-		r.clusterAccessRec.Unregister(t.Name)
-	}
-	// Re-register current spec targets (needed if status is stale).
+	// Register all known targets (spec + status) so ReconcileDelete cleans up all their AccessRequests.
 	r.registerMCPs(gr)
+	for _, st := range gr.Status.PropagateStatus {
+		r.clusterAccessRec.Register(mcpClusterRegistration(st.Name))
+	}
 
 	res, err := r.clusterAccessRec.ReconcileDelete(ctx, req)
 	if err != nil {
@@ -312,23 +311,23 @@ func setCondition(conditions *[]metav1.Condition, c metav1.Condition) {
 	meta.SetStatusCondition(conditions, c)
 }
 
+// mcpClusterRegistration builds a ClusterRegistration for a single MCP by name.
+func mcpClusterRegistration(name string) advanced.ClusterRegistration {
+	return advanced.ExistingClusterRequest(name, name, func(req reconcile.Request, _ ...any) (*commonapi.ObjectReference, error) {
+		return &commonapi.ObjectReference{Name: req.Name, Namespace: req.Namespace}, nil
+	}).
+		WithNamespaceGenerator(advanced.DefaultNamespaceGeneratorForMCP).
+		WithTokenAccess(&clustersv1alpha1.TokenConfig{
+			RoleRefs: []commonapi.RoleRef{{Kind: "ClusterRole", Name: "cluster-admin"}},
+		}).
+		WithScheme(mcpScheme).
+		Build()
+}
+
 // registerMCPs registers each propagateTo target with the clusterAccessRec.
-// Each MCP gets an ExistingClusterRequest registration keyed by its name.
 func (r *GitRepositoryReconciler) registerMCPs(gr *corev1alpha1.GitRepository) {
-	token := &clustersv1alpha1.TokenConfig{
-		RoleRefs: []commonapi.RoleRef{{Kind: "ClusterRole", Name: "cluster-admin"}},
-	}
 	for _, target := range gr.Spec.PropagateToControlPlanes {
-		name := target.Name
-		r.clusterAccessRec.Register(
-			advanced.ExistingClusterRequest(name, name, func(req reconcile.Request, _ ...any) (*commonapi.ObjectReference, error) {
-				return &commonapi.ObjectReference{Name: req.Name, Namespace: req.Namespace}, nil
-			}).
-				WithNamespaceGenerator(advanced.DefaultNamespaceGeneratorForMCP).
-				WithTokenAccess(token).
-				WithScheme(mcpScheme).
-				Build(),
-		)
+		r.clusterAccessRec.Register(mcpClusterRegistration(target.Name))
 	}
 }
 
@@ -366,18 +365,7 @@ func (r *GitRepositoryReconciler) syncTokens(
 	r.registerMCPs(gr)
 	for _, st := range gr.Status.PropagateStatus {
 		if !specNames[st.Name] {
-			name := st.Name
-			r.clusterAccessRec.Register(
-				advanced.ExistingClusterRequest(name, name, func(req reconcile.Request, _ ...any) (*commonapi.ObjectReference, error) {
-					return &commonapi.ObjectReference{Name: req.Name, Namespace: req.Namespace}, nil
-				}).
-					WithNamespaceGenerator(advanced.DefaultNamespaceGeneratorForMCP).
-					WithTokenAccess(&clustersv1alpha1.TokenConfig{
-						RoleRefs: []commonapi.RoleRef{{Kind: "ClusterRole", Name: "cluster-admin"}},
-					}).
-					WithScheme(mcpScheme).
-					Build(),
-			)
+			r.clusterAccessRec.Register(mcpClusterRegistration(st.Name))
 		}
 	}
 
