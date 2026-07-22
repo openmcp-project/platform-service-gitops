@@ -200,6 +200,12 @@ func runCommand(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("unable to start manager: %w", err)
 	}
 
+	// Add the platform cluster to the manager so its cache is started.
+	// Required for GitHubInstanceReconciler's source.Kind watch on the platform cluster.
+	if err := mgr.Add(platformCluster.Cluster()); err != nil {
+		return fmt.Errorf("unable to add platform cluster to manager: %w", err)
+	}
+
 	// Register Kustomization scheme on the manager scheme so the kustomization controller works.
 	if err := kustomizev1.AddToScheme(mgr.GetScheme()); err != nil {
 		return fmt.Errorf("unable to add kustomizev1 scheme: %w", err)
