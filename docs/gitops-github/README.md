@@ -84,6 +84,34 @@ kubectl apply -f docs/gitops-github/examples/gitrepository.yaml
 The controller resolves the `AppInstallation`, mints a scoped installation token
 to prove access (the token is not stored here), and sets `Ready=True`.
 
+## Alternative: authenticate with a user-provided Secret
+
+Instead of the platform GitHub App, an end user can supply their own credential
+directly by referencing a Kubernetes `Secret` (a Personal Access Token or SSH
+key). This is the fallback when you are not using the platform App. The Secret
+must live in the **same namespace** as the `GitRepository`.
+
+Set `credentialRef.kind: Secret` (the `group` defaults to `""`, the core API
+group). See [examples/gitrepository-secret.yaml](examples/gitrepository-secret.yaml).
+
+The Secret follows the Flux `source.toolkit.fluxcd.io` key convention:
+
+| Auth        | Secret keys |
+|-------------|-------------|
+| HTTPS (PAT) | `username`, `password` (the PAT goes in `password`) |
+| SSH         | `identity`, `known_hosts` (optional `password` = key passphrase) |
+
+The controller reads the Secret, validates the credential by performing a live
+`ls-remote` against the repository, and sets `CredentialResolved` / `Ready`.
+Rotating the Secret is picked up automatically on the next reconcile. Failures
+are reported without exposing credential material:
+
+- `CredentialResolved=False` (reason `CredentialNotFound`) — Secret missing.
+- `CredentialResolved=False` (reason `UnsupportedSecretFormat`) — Secret is
+  neither an HTTPS nor an SSH credential.
+- `Ready=False` (reason `AuthenticationFailed` / `RepositoryUnreachable`) —
+  credential rejected, or the repository could not be reached.
+
 ## Status quick reference
 
 | Resource | Condition | Meaning |
@@ -91,5 +119,5 @@ to prove access (the token is not stored here), and sets `Ready=True`.
 | GitHubInstance | `Ready` | all referenced Secrets present & valid |
 | AppInstallation | `AppInstalled` | App installed on the org/user |
 | AppInstallation | `AccessVerified` | App authenticated successfully |
-| GitRepository | `CredentialResolved` | AppInstallation resolved + token minted |
+| GitRepository | `CredentialResolved` | credential (AppInstallation or Secret) resolved |
 | GitRepository | `Ready` | credentials resolved, access verified |
