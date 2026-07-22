@@ -1,0 +1,12 @@
+apiVersion: gitops.open-control-plane.io/v1alpha1
+kind: Kustomization
+metadata:
+  name: my-workspaces
+  namespace: default
+spec:
+  sourceRef:
+    kind: GitRepository
+    name: my-infra
+  path: ./projects/my-project
+  interval: 5m
+  prune: true
