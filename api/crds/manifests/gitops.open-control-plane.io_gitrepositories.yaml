@@ -78,26 +78,41 @@ spec:
                 type: string
               propagateTo:
                 description: |-
-                  PropagateToControlPlanes lists ControlPlanes that should receive a
-                  scoped token and a Flux GitRepository resource for this source.
-                  Behaviour implemented in a follow-up issue.
+                  PropagateToControlPlanes lists ControlPlanes (or future Workspaces) that should
+                  receive a scoped token and a Flux GitRepository resource for this source.
+                  Each entry may specify an explicit name or a matchLabels selector, but not both.
                 items:
-                  description: PropagateTarget declares a ControlPlane that should
-                    receive scoped repository access.
+                  description: |-
+                    PropagateTarget declares a target (ControlPlane or future Workspace) that should
+                    receive a scoped repository token and a Flux GitRepository resource.
+                    Exactly one of name or matchLabels must be set.
                   properties:
                     kind:
                       description: Kind of target. Currently only ControlPlane is
                         supported.
+                      enum:
+                      - ControlPlane
                       type: string
                     matchLabels:
                       additionalProperties:
                         type: string
+                      description: |-
+                        MatchLabels selects ControlPlanes by label. All matching ControlPlanes in the
+                        GitRepository's namespace receive a token and Flux GitRepository.
+                        Mutually exclusive with name.
                       type: object
                     name:
+                      description: |-
+                        Name is the explicit name of the target ControlPlane.
+                        Mutually exclusive with matchLabels.
                       type: string
                   required:
                   - kind
                   type: object
+                  x-kubernetes-validations:
+                  - message: ”exactly one of name or matchLabels must be set”
+                    rule: ”(has(self.name) && self.name != '') != (has(self.matchLabels)
+                      && size(self.matchLabels) > 0)”
                 type: array
               ref:
                 description: Ref specifies the branch, tag, or commit to track.
@@ -124,7 +139,7 @@ spec:
               conditions:
                 description: |-
                   Conditions summarise the current state.
-                  Known types: Ready, CredentialResolved.
+                  Known condition types: Ready, CredentialResolved.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -188,6 +203,48 @@ spec:
                   was computed from.
                 format: int64
                 type: integer
+              propagated:
+                description: Propagated holds per-MCP status for each resolved entry
+                  in spec.propagateTo.
+                items:
+                  description: PropagateStatus holds the per-MCP reconciliation state
+                    for one resolved propagateTo target.
+                  properties:
+                    controlPlaneName:
+                      description: ControlPlaneName is the name of the ControlPlane
+                        this entry refers to.
+                      type: string
+                    message:
+                      description: Message is a human-readable description of the
+                        current phase.
+                      type: string
+                    phase:
+                      description: Phase summarises the current reconciliation state
+                        for this target.
+                      enum:
+                      - Pending
+                      - Ready
+                      - TokenFailed
+                      - FluxFailed
+                      - Conflict
+                      type: string
+                    reason:
+                      description: Reason is a machine-readable reason code for the
+                        current phase.
+                      type: string
+                    tokenExpiresAt:
+                      description: |-
+                        TokenExpiresAt is the expiry time of the currently active installation token.
+                        The controller rotates the token before this time based on the configured renew buffer.
+                      format: date-time
+                      type: string
+                  required:
+                  - controlPlaneName
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - controlPlaneName
+                x-kubernetes-list-type: map
             type: object
         type: object
     served: true

@@ -108,9 +108,9 @@ spec:
                   - kind
                   type: object
                   x-kubernetes-validations:
-                  - message: exactly one of name or matchLabels must be set
-                    rule: (has(self.name) && self.name != ”) != (has(self.matchLabels)
-                      && size(self.matchLabels) > 0)
+                  - message: ”exactly one of name or matchLabels must be set”
+                    rule: ”(has(self.name) && self.name != '') != (has(self.matchLabels)
+                      && size(self.matchLabels) > 0)”
                 type: array
               ref:
                 description: Ref specifies the branch, tag, or commit to track.

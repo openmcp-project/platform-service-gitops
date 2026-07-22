@@ -40,7 +40,7 @@ const (
 // PropagateTarget declares a target (ControlPlane or future Workspace) that should
 // receive a scoped repository token and a Flux GitRepository resource.
 // Exactly one of name or matchLabels must be set.
-// +kubebuilder:validation:XValidation:rule="(has(self.name) && self.name != ”) != (has(self.matchLabels) && size(self.matchLabels) > 0)",message="exactly one of name or matchLabels must be set"
+// +kubebuilder:validation:XValidation:rule=”(has(self.name) && self.name != '') != (has(self.matchLabels) && size(self.matchLabels) > 0)”,message=”exactly one of name or matchLabels must be set”
 type PropagateTarget struct {
 	// Kind of target. Currently only ControlPlane is supported.
 	// +kubebuilder:validation:Required
