@@ -85,7 +85,7 @@ spec:
                   description: |-
                     PropagateTarget declares a target (ControlPlane or future Workspace) that should
                     receive a scoped repository token and a Flux GitRepository resource.
-                    Exactly one of name or matchLabels must be set.
+                    Exactly one of name or matchLabels must be set — setting both is undefined behaviour.
                   properties:
                     kind:
                       description: Kind of target. Currently only ControlPlane is
@@ -109,10 +109,6 @@ spec:
                   required:
                   - kind
                   type: object
-                  x-kubernetes-validations:
-                  - message: ”exactly one of name or matchLabels must be set”
-                    rule: ”(has(self.name) && self.name != '') != (has(self.matchLabels)
-                      && size(self.matchLabels) > 0)”
                 type: array
               ref:
                 description: Ref specifies the branch, tag, or commit to track.
