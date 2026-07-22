@@ -14,7 +14,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/cluster"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	githubv1alpha1 "github.com/openmcp-project/platform-service-gitops/api/github/v1alpha1"
 	"github.com/openmcp-project/platform-service-gitops/internal/controllerconst"
@@ -36,19 +39,27 @@ const (
 // +kubebuilder:rbac:groups=github.gitops.open-control-plane.io,resources=githubinstances/status,verbs=get;update;patch
 type GitHubInstanceReconciler struct {
 	client              client.Client
+	platformCluster     cluster.Cluster
 	credentialNamespace string
 }
 
-// NewGitHubInstanceReconciler creates a reconciler with the given client and
-// default credential namespace.
-func NewGitHubInstanceReconciler(c client.Client, credentialNamespace string) *GitHubInstanceReconciler {
-	return &GitHubInstanceReconciler{client: c, credentialNamespace: credentialNamespace}
+// NewGitHubInstanceReconciler creates a reconciler. platformCluster is the
+// controller-runtime Cluster for the platform cluster where GitHubInstance
+// resources live; it is used to set up the watch.
+func NewGitHubInstanceReconciler(c client.Client, platformCluster cluster.Cluster, credentialNamespace string) *GitHubInstanceReconciler {
+	return &GitHubInstanceReconciler{client: c, platformCluster: platformCluster, credentialNamespace: credentialNamespace}
 }
 
 // SetupWithManager registers the reconciler with the controller-runtime manager.
+// GitHubInstance lives on the platform cluster, so we watch it via source.Kind
+// backed by the platform cluster cache rather than the onboarding manager cache.
 func (r *GitHubInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&githubv1alpha1.GitHubInstance{}).
+		WatchesRawSource(source.Kind(
+			r.platformCluster.GetCache(),
+			&githubv1alpha1.GitHubInstance{},
+			&handler.TypedEnqueueRequestForObject[*githubv1alpha1.GitHubInstance]{},
+		)).
 		Named("github-githubinstance").
 		Complete(r)
 }

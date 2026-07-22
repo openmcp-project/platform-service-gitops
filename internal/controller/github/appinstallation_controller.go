@@ -43,9 +43,10 @@ const requeueInterval = controllerconst.RequeueInterval
 // +kubebuilder:rbac:groups=github.gitops.open-control-plane.io,resources=githubinstances,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 type AppInstallationReconciler struct {
+	// client reads AppInstallation objects from the onboarding cluster.
 	client client.Client
-	// credentialNamespace is the default namespace for credential Secrets whose
-	// SecretReference does not specify one.
+	// platformClient reads GitHubInstance and credential Secrets from the platform cluster.
+	platformClient      client.Client
 	credentialNamespace string
 	// newClient builds a GitHub App client; overridable in tests.
 	newClient func(githubapp.Credentials) (GitHubClient, error)
@@ -62,11 +63,13 @@ type GitHubClient interface {
 // can inject a fake instead of talking to a real GitHub instance.
 type GitHubClientFactory func(githubapp.Credentials) (GitHubClient, error)
 
-// NewAppInstallationReconciler creates a reconciler with the given client and
-// default credential namespace.
-func NewAppInstallationReconciler(c client.Client, credentialNamespace string) *AppInstallationReconciler {
+// NewAppInstallationReconciler creates a reconciler with the given clients and
+// default credential namespace. onboardingClient watches AppInstallation objects;
+// platformClient reads GitHubInstance and credential Secrets.
+func NewAppInstallationReconciler(onboardingClient, platformClient client.Client, credentialNamespace string) *AppInstallationReconciler {
 	return &AppInstallationReconciler{
-		client:              c,
+		client:              onboardingClient,
+		platformClient:      platformClient,
 		credentialNamespace: credentialNamespace,
 		newClient: func(creds githubapp.Credentials) (GitHubClient, error) {
 			return githubapp.NewClient(creds)
@@ -173,7 +176,7 @@ func (r *AppInstallationReconciler) reconcile(ctx context.Context, ai *githubv1a
 // resolveCredentials looks up the GitHubInstance, selects the credential Secret,
 // and reads the App ID, private key and URL from it.
 func (r *AppInstallationReconciler) resolveCredentials(ctx context.Context, ai *githubv1alpha1.AppInstallation) (githubapp.Credentials, error) {
-	return credentials.Resolve(ctx, r.client, ai.Spec.InstanceRef.Name, ai.Spec.CredentialName, r.credentialNamespace)
+	return credentials.Resolve(ctx, r.platformClient, ai.Spec.InstanceRef.Name, ai.Spec.CredentialName, r.credentialNamespace)
 }
 
 // setBoth sets both conditions to False with the same reason/message. Used for
