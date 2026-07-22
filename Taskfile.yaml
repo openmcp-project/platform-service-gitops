@@ -7,9 +7,9 @@ includes:
 
 vars:
   NESTED_MODULES: api
-  API_DIRS: "{{.ROOT_DIR}}/api/core/v1alpha1/..."
+  API_DIRS: "{{.ROOT_DIR}}/api/core/v1alpha1/... {{.ROOT_DIR}}/api/github/v1alpha1/..."
   MANIFEST_OUT: "{{.ROOT_DIR}}/api/crds/manifests"
-  CODE_DIRS: "{{.ROOT_DIR}}/cmd/... {{.ROOT_DIR}}/internal/... {{.ROOT_DIR}}/api/core/v1alpha1/..."
+  CODE_DIRS: "{{.ROOT_DIR}}/cmd/... {{.ROOT_DIR}}/internal/... {{.ROOT_DIR}}/api/core/v1alpha1/... {{.ROOT_DIR}}/api/github/v1alpha1/..."
   COMPONENTS: "platform-service-gitops"
   REPO_URL: "https://github.com/openmcp-project/platform-service-gitops"
   ENVTEST_REQUIRED: "true"
