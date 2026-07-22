@@ -8,6 +8,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -58,6 +59,24 @@ func installedAppInstallation() *githubv1alpha1.AppInstallation {
 	}
 }
 
+// gitRepoWithCredential builds a GitRepository referencing a credential of the
+// given kind/name (used for the kind:Secret and unsupported-kind paths).
+func gitRepoWithCredential(kind, credName string) *corev1alpha1.GitRepository {
+	gr := gitRepo(credName)
+	gr.Spec.CredentialRef.Kind = kind
+	gr.Spec.CredentialRef.Group = ""
+	return gr
+}
+
+// malformedSecret has neither the HTTPS (username/password) nor SSH (identity)
+// shape, so ResolveSecret classifies it as an unsupported format.
+func malformedSecret(name string) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: grNamespace},
+		Data:       map[string][]byte{"bearerToken": []byte("nope")},
+	}
+}
+
 func reconcileGR(objs []client.Object) *corev1alpha1.GitRepository {
 	b := fake.NewClientBuilder().WithScheme(scheme)
 	for _, o := range objs {
@@ -66,6 +85,8 @@ func reconcileGR(objs []client.Object) *corev1alpha1.GitRepository {
 			b = b.WithObjects(v).WithStatusSubresource(v)
 		case *githubv1alpha1.AppInstallation:
 			b = b.WithObjects(v).WithStatusSubresource(v)
+		case *corev1.Secret:
+			b = b.WithObjects(v)
 		}
 	}
 	cl := b.Build()
@@ -124,6 +145,62 @@ var _ = Describe("GitRepositoryReconciler", func() {
 			Expect(cred.Reason).To(Equal("CredentialResolved"))
 			ready := findCondition(out.Status.Conditions, "Ready")
 			Expect(ready.Status).To(Equal(metav1.ConditionTrue))
+		})
+	})
+
+	Context("when credentialRef.kind is unsupported", func() {
+		It("sets CredentialResolved=False / UnsupportedCredentialKind", func() {
+			out := reconcileGR([]client.Object{gitRepoWithCredential("Banana", "whatever")})
+			cred := findCondition(out.Status.Conditions, "CredentialResolved")
+			Expect(cred.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cred.Reason).To(Equal("UnsupportedCredentialKind"))
+		})
+	})
+
+	// kind:Secret path. Success and auth-failure outcomes require a live
+	// ls-remote (ValidateAccess) and are covered by the credentials package
+	// unit tests and the manual smoke test; here we cover the deterministic,
+	// pre-network branches with a fake client.
+	Context("when credentialRef.kind is Secret but the Secret is missing", func() {
+		It("sets CredentialResolved=False / CredentialNotFound", func() {
+			out := reconcileGR([]client.Object{gitRepoWithCredential("Secret", "git-creds")})
+			cred := findCondition(out.Status.Conditions, "CredentialResolved")
+			Expect(cred.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cred.Reason).To(Equal("CredentialNotFound"))
+			ready := findCondition(out.Status.Conditions, "Ready")
+			Expect(ready.Status).To(Equal(metav1.ConditionFalse))
+		})
+	})
+
+	Context("when the Secret has an unsupported format", func() {
+		It("sets CredentialResolved=False / UnsupportedSecretFormat", func() {
+			out := reconcileGR([]client.Object{
+				gitRepoWithCredential("Secret", "git-creds"),
+				malformedSecret("git-creds"),
+			})
+			cred := findCondition(out.Status.Conditions, "CredentialResolved")
+			Expect(cred.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cred.Reason).To(Equal("UnsupportedSecretFormat"))
+		})
+	})
+
+	Context("when a Secret credential is present", func() {
+		It("never leaks secret material into status conditions", func() {
+			const sentinel = "s3cr3t-token-value-DO-NOT-LEAK"
+			sec := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "git-creds", Namespace: grNamespace},
+				Data: map[string][]byte{
+					"username": []byte("alice"),
+					"password": []byte(sentinel),
+				},
+			}
+			// URL is unreachable in the test env, so ValidateAccess fails — the
+			// interesting part is that whatever status it sets contains no secret.
+			out := reconcileGR([]client.Object{gitRepoWithCredential("Secret", "git-creds"), sec})
+			for _, c := range out.Status.Conditions {
+				Expect(c.Message).NotTo(ContainSubstring(sentinel),
+					"condition %q message leaked secret material", c.Type)
+			}
 		})
 	})
 })
