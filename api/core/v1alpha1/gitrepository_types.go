@@ -39,6 +39,38 @@ type PropagateTarget struct {
 	MatchLabels map[string]string `json:"matchLabels,omitempty"`
 }
 
+// TokenSyncPhase describes the propagation state for one MCP.
+// +kubebuilder:validation:Enum=Pending;TokenSynced;Error
+type TokenSyncPhase string
+
+const (
+	TokenSyncPhasePending     TokenSyncPhase = "Pending"
+	TokenSyncPhaseTokenSynced TokenSyncPhase = "TokenSynced"
+	TokenSyncPhaseError       TokenSyncPhase = "Error"
+)
+
+// MCPPropagateState records the token-sync state for one target MCP.
+type MCPPropagateState struct {
+	// Name is the name of the target ControlPlane.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Required
+	Name string `json:"name"`
+
+	// Phase is the current sync phase for this MCP.
+	// +kubebuilder:default=Pending
+	// +kubebuilder:validation:Required
+	Phase TokenSyncPhase `json:"phase"`
+
+	// Message is a human-readable explanation of the current phase.
+	// +optional
+	Message string `json:"message,omitempty"`
+
+	// TokenExpiresAt is when the current token expires. Absent when no token has
+	// been synced yet.
+	// +optional
+	TokenExpiresAt *metav1.Time `json:"tokenExpiresAt,omitempty"`
+}
+
 // GitRepositorySpec defines the desired state of GitRepository.
 type GitRepositorySpec struct {
 	// URL is the HTTPS URL of the Git repository.
@@ -78,6 +110,12 @@ type GitRepositoryStatus struct {
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// PropagateStatus records the per-MCP token-sync state.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	PropagateStatus []MCPPropagateState `json:"propagateStatus,omitempty"`
 }
 
 // +kubebuilder:object:root=true
