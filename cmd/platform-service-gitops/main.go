@@ -38,7 +38,13 @@ import (
 	// +kubebuilder:scaffold:imports
 )
 
-const controllerName = "gitops.open-control-plane.io"
+const (
+	controllerName = "gitops.open-control-plane.io"
+	githubGroup    = "github.gitops.open-control-plane.io"
+	verbGet        = "get"
+	verbPatch      = "patch"
+	verbUpdate     = "update"
+)
 
 var logger logging.Logger
 
@@ -111,9 +117,6 @@ func initializePlatformCluster() (*clusters.Cluster, error) {
 	return platformCluster, nil
 }
 
-// +kubebuilder:rbac:groups=clusters.openmcp.cloud,resources=clusterrequests,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=clusters.openmcp.cloud,resources=accessrequests,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;update;patch
 func initCommand(cmd *cobra.Command, _ []string) error {
 	platformCluster, err := initializePlatformCluster()
 	if err != nil {
@@ -213,36 +216,34 @@ func runCommand(cmd *cobra.Command, _ []string) error {
 			{
 				Rules: []rbacv1.PolicyRule{
 					{
-						APIGroups: []string{"gitops.open-control-plane.io", "github.gitops.open-control-plane.io"},
+						APIGroups: []string{controllerName, githubGroup},
 						Resources: []string{"gitrepositories", "appinstallations", "kustomizations"},
-						Verbs:     []string{"get", "list", "watch"},
+						Verbs:     []string{verbGet, "list", "watch"},
 					},
 					{
-						APIGroups: []string{"gitops.open-control-plane.io"},
+						APIGroups: []string{controllerName},
 						Resources: []string{"gitrepositories", "kustomizations"},
-						Verbs:     []string{"update", "patch"},
+						Verbs:     []string{verbUpdate, verbPatch},
 					},
 					{
-						APIGroups: []string{"gitops.open-control-plane.io", "github.gitops.open-control-plane.io"},
+						APIGroups: []string{controllerName, githubGroup},
 						Resources: []string{"gitrepositories/status", "kustomizations/status", "appinstallations/status"},
-						Verbs:     []string{"get", "update", "patch"},
+						Verbs:     []string{verbGet, verbUpdate, verbPatch},
 					},
 					{
-						APIGroups: []string{"gitops.open-control-plane.io"},
+						APIGroups: []string{controllerName},
 						Resources: []string{"gitrepositories/finalizers"},
-						Verbs:     []string{"update"},
+						Verbs:     []string{verbUpdate},
 					},
 					{
-						// Leader election lease in the default namespace on the onboarding cluster.
 						APIGroups: []string{"coordination.k8s.io"},
 						Resources: []string{"leases"},
-						Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
+						Verbs:     []string{verbGet, "list", "watch", "create", verbUpdate, verbPatch, "delete"},
 					},
 					{
-						// Leader election events.
 						APIGroups: []string{""},
 						Resources: []string{"events"},
-						Verbs:     []string{"create", "patch"},
+						Verbs:     []string{"create", verbPatch},
 					},
 				},
 			},
@@ -321,7 +322,9 @@ func runCommand(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to create controller githubinstance: %w", err)
 	}
 
-	appInstall := githubcontroller.NewAppInstallationReconciler(onboardingCluster.Client(), platformCluster.Client(), credentialNamespace)
+	appInstall := githubcontroller.NewAppInstallationReconciler(
+		onboardingCluster.Client(), platformCluster.Client(), credentialNamespace,
+	)
 	if err := appInstall.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("failed to create controller appinstallation: %w", err)
 	}

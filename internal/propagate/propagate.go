@@ -245,27 +245,3 @@ func secretName(gitRepo *corev1alpha1.GitRepository) string {
 func managedByValue(gitRepo *corev1alpha1.GitRepository) string {
 	return gitRepo.Namespace + "/" + gitRepo.Name
 }
-
-// repoNameFromURL extracts the repository name (last path segment without .git)
-// from a GitHub HTTPS URL such as https://github.com/my-org/my-infra.
-// Returns an empty string for malformed URLs (no path separator); callers
-// that pass an empty repoName to MintScopedToken get an unscoped token.
-func repoNameFromURL(url string) string {
-	for len(url) > 0 && url[len(url)-1] == '/' {
-		url = url[:len(url)-1]
-	}
-	last := ""
-	for i := len(url) - 1; i >= 0; i-- {
-		if url[i] == '/' {
-			last = url[i+1:]
-			break
-		}
-	}
-	if last == "" {
-		return ""
-	}
-	if len(last) > 4 && last[len(last)-4:] == ".git" {
-		last = last[:len(last)-4]
-	}
-	return last
-}
