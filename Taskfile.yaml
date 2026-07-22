@@ -14,3 +14,11 @@ vars:
   REPO_URL: "https://github.com/openmcp-project/platform-service-gitops"
   ENVTEST_REQUIRED: "true"
   GENERATE_DOCS_INDEX: "false"
+
+tasks:
+  generate:manifests:
+    desc: "Generate CRD manifests and patch openmcp.cloud/cluster labels"
+    run: once
+    cmds:
+    - task: generate:manifests-internal
+    - cmd: python3 "{{.ROOT_DIR}}/hack/patch-crd-labels.sh" "{{.MANIFEST_OUT}}"
