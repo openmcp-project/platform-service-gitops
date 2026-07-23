@@ -1,0 +1,7 @@
+apiVersion: github.gitops.open-control-plane.io/v1alpha1
+kind: GitHubInstance
+metadata:
+  name: github
+spec:
+  secretRefs:
+    - name: github-app

@@ -1,0 +1,17 @@
+apiVersion: gitops.open-control-plane.io/v1alpha1
+kind: GitRepository
+metadata:
+  name: test-repo
+  namespace: default
+spec:
+  url: "{{ .RepoURL }}"
+  ref:
+    branch: main
+  path: ./
+  credentialRef:
+    name: app-connection
+    kind: AppInstallation
+    group: github.gitops.open-control-plane.io
+  propagateTo:
+    - kind: ControlPlane
+      name: test-mcp
