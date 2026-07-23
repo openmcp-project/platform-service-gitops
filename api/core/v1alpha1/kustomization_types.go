@@ -64,6 +64,7 @@ type KustomizationStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,categories={gitops,openmcp}
+// +kubebuilder:metadata:labels="openmcp.cloud/cluster=onboarding"
 // +kubebuilder:printcolumn:name="SOURCE",type="string",JSONPath=".spec.sourceRef.name"
 // +kubebuilder:printcolumn:name="PATH",type="string",JSONPath=".spec.path"
 // +kubebuilder:printcolumn:name="READY",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"

@@ -18,15 +18,5 @@ includes:
   shared:
     taskfile: hack/common/Taskfile_controller.yaml
     flatten: true
-    excludes:
-    - generate
 
-tasks:
-  # generate overrides the included generate to also patch openmcp.cloud/cluster labels
-  # back onto CRD manifests after controller-gen strips them (it rm -rf the
-  # manifests dir on every run).
-  generate:
-    desc: "Run code/manifest generation and patch CRD cluster labels"
-    cmds:
-    - task: generate:all
-    - cmd: python3 "{{.ROOT_DIR}}/hack/patch-crd-labels.sh" "{{.MANIFEST_OUT}}"
+tasks: {}
