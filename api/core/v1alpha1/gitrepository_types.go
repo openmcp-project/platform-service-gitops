@@ -157,6 +157,7 @@ type GitRepositoryStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,categories={gitops,openmcp}
+// +kubebuilder:metadata:labels="openmcp.cloud/cluster=onboarding"
 // +kubebuilder:printcolumn:name="URL",type="string",JSONPath=".spec.url"
 // +kubebuilder:printcolumn:name="BRANCH",type="string",JSONPath=".spec.ref.branch"
 // +kubebuilder:printcolumn:name="READY",type="string",JSONPath=".status.conditions[?(@.type=='Ready')].status"
