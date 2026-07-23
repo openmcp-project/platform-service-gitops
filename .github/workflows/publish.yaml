@@ -5,6 +5,11 @@ on:
     tags:
       - v*
   workflow_dispatch:
+    inputs:
+      version_override:
+        description: "Version to publish (e.g. 0.0.0-rc1). Overrides the VERSION file."
+        required: false
+        type: string
 
 permissions:
   packages: write
@@ -39,6 +44,8 @@ jobs:
 
       - name: Read and validate VERSION
         id: version
+        env:
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
         run: |
           VERSION=$(task version)
           # Accepts: 0.0.0, 0.0.0-dev, 0.0.0-dev-<sha>, 0.0.0-rc<N>
@@ -74,10 +81,16 @@ jobs:
           version: latest
 
       - name: Build and Push Images
+        env:
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
         run: task build:img:all --verbose
 
       - name: Package and Push Helm Charts
+        env:
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
         run: task build:helm:all --verbose
 
       - name: Build and Push OCM Component
+        env:
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
         run: task build:ocm:all --verbose
