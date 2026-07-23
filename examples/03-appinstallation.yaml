@@ -8,6 +8,5 @@ metadata:
 spec:
   instanceRef:
     name: sap-ghe
-  # credentialName: sap-ghe   # optional when the instance lists exactly one secret
   org: cloud-orchestration
   # user: some-user           # alternative to org (exactly one required)

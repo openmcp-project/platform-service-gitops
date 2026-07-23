@@ -27,11 +27,10 @@ const (
 	SecretKeyURL        = "url"
 )
 
-// Resolve looks up the GitHubInstance named by instanceName, selects the
-// credential Secret (by credentialName, or the sole one when empty), and reads
-// the App ID, private key and URL from it. defaultNamespace is used for secret
-// refs that do not specify a namespace.
-func Resolve(ctx context.Context, c client.Client, instanceName, credentialName, defaultNamespace string) (githubapp.Credentials, error) {
+// Resolve looks up the GitHubInstance named by instanceName, reads its single
+// credential Secret, and returns the GitHub App credentials.
+// defaultNamespace is used when the SecretRef does not specify a namespace.
+func Resolve(ctx context.Context, c client.Client, instanceName, defaultNamespace string) (githubapp.Credentials, error) {
 	inst := &githubv1alpha1.GitHubInstance{}
 	if err := c.Get(ctx, types.NamespacedName{Name: instanceName}, inst); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -40,11 +39,7 @@ func Resolve(ctx context.Context, c client.Client, instanceName, credentialName,
 		return githubapp.Credentials{}, fmt.Errorf("fetching GitHubInstance %q: %w", instanceName, err)
 	}
 
-	ref, err := SelectSecretRef(inst.Spec.SecretRefs, credentialName)
-	if err != nil {
-		return githubapp.Credentials{}, err
-	}
-
+	ref := inst.Spec.SecretRef
 	ns := ref.Namespace
 	if ns == "" {
 		ns = defaultNamespace
@@ -59,23 +54,6 @@ func Resolve(ctx context.Context, c client.Client, instanceName, credentialName,
 	}
 
 	return FromSecret(secret)
-}
-
-// SelectSecretRef picks the secret ref named by credentialName, or the sole ref
-// when credentialName is empty and there is exactly one.
-func SelectSecretRef(refs []githubv1alpha1.SecretReference, credentialName string) (githubv1alpha1.SecretReference, error) {
-	if credentialName == "" {
-		if len(refs) == 1 {
-			return refs[0], nil
-		}
-		return githubv1alpha1.SecretReference{}, fmt.Errorf("credentialName must be set: instance lists %d secrets", len(refs))
-	}
-	for _, ref := range refs {
-		if ref.Name == credentialName {
-			return ref, nil
-		}
-	}
-	return githubv1alpha1.SecretReference{}, fmt.Errorf("credentialName %q not found in GitHubInstance secretRefs", credentialName)
 }
 
 // FromSecret reads GitHub App credentials from a Secret's data.

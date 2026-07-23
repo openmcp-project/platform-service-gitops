@@ -39,7 +39,7 @@ var _ = Describe("GitHubInstanceReconciler", func() {
 	instance := &githubv1alpha1.GitHubInstance{
 		ObjectMeta: metav1.ObjectMeta{Name: instanceName},
 		Spec: githubv1alpha1.GitHubInstanceSpec{
-			SecretRefs: []githubv1alpha1.SecretReference{{Name: instanceName}},
+			SecretRef: githubv1alpha1.SecretReference{Name: instanceName},
 		},
 	}
 
