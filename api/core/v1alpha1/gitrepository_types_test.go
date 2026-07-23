@@ -6,9 +6,10 @@ package v1alpha1_test
 import (
 	"testing"
 
-	"github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/openmcp-project/platform-service-gitops/api/core/v1alpha1"
 )
 
 func TestGitRepository_SpecFields(t *testing.T) {

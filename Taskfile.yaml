@@ -1,16 +1,39 @@
-version: "3"
-
-includes:
-  shared:
-    taskfile: hack/common/Taskfile_controller.yaml
-    flatten: true
+version: 3
 
 vars:
   NESTED_MODULES: api
-  API_DIRS: "{{.ROOT_DIR}}/api/core/v1alpha1/..."
+  API_DIRS: "{{.ROOT_DIR}}/api/core/v1alpha1/... {{.ROOT_DIR}}/api/github/v1alpha1/..."
   MANIFEST_OUT: "{{.ROOT_DIR}}/api/crds/manifests"
-  CODE_DIRS: "{{.ROOT_DIR}}/cmd/... {{.ROOT_DIR}}/internal/... {{.ROOT_DIR}}/api/core/v1alpha1/..."
+  CODE_DIRS: "{{.ROOT_DIR}}/cmd/... {{.ROOT_DIR}}/internal/... {{.ROOT_DIR}}/api/core/v1alpha1/... {{.ROOT_DIR}}/api/github/v1alpha1/..."
   COMPONENTS: "platform-service-gitops"
   REPO_URL: "https://github.com/openmcp-project/platform-service-gitops"
   ENVTEST_REQUIRED: "true"
   GENERATE_DOCS_INDEX: "false"
+  CHART_COMPONENTS: "[]"
+  CRDS_COMPONENTS: "platform-service-gitops"
+  CRDS_PATH: "{{.ROOT_DIR}}/api/crds/manifests"
+  COMMON_SCRIPT_DIR: "{{.ROOT_DIR}}/hack/common"
+
+includes:
+  shared:
+    taskfile: hack/common/Taskfile_controller.yaml
+
+tasks:
+  # generate overrides shared:generate to also patch openmcp.cloud/cluster labels
+  # back onto CRD manifests after controller-gen strips them (it rm -rf the
+  # manifests dir on every run).
+  generate:
+    desc: "Run code/manifest generation and patch CRD cluster labels"
+    cmds:
+    - task: shared:generate
+    - cmd: python3 "{{.ROOT_DIR}}/hack/patch-crd-labels.sh" "{{.MANIFEST_OUT}}"
+
+  validate:
+    desc: "Run validation checks"
+    cmds:
+    - task: shared:validate
+
+  test:
+    desc: "Run tests"
+    cmds:
+    - task: shared:test
