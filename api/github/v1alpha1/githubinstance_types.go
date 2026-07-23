@@ -22,16 +22,16 @@ type SecretReference struct {
 
 // GitHubInstanceSpec defines the desired state of GitHubInstance.
 //
-// A GitHubInstance is managed by the platform owner. It groups one or more
-// credential Secrets that each describe a GitHub App on a GitHub instance
-// (public github.com or a GitHub Enterprise Server). End users never handle
-// these Secrets; they reference the GitHubInstance from an AppInstallation.
+// A GitHubInstance is managed by the platform owner. It describes a single
+// GitHub App on a GitHub instance (public github.com or a GitHub Enterprise
+// Server) via exactly one credential Secret. End users never handle this
+// Secret; they reference the GitHubInstance by name from an AppInstallation.
+// For multiple GitHub Apps or instances, create multiple GitHubInstance objects.
 type GitHubInstanceSpec struct {
-	// SecretRefs lists the credential Secrets that belong to this instance.
-	// Each Secret holds the App ID, private key and instance URL.
+	// SecretRef points at the credential Secret for this instance.
+	// The Secret must contain the keys "appID", "privateKey" and "url".
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:MinItems=1
-	SecretRefs []SecretReference `json:"secretRefs"`
+	SecretRef SecretReference `json:"secretRef"`
 }
 
 // GitHubInstanceStatus defines the observed state of GitHubInstance.

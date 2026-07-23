@@ -5,6 +5,6 @@ kind: GitHubInstance
 metadata:
   name: sap-ghe
 spec:
-  secretRefs:
-    - name: sap-ghe
-      # namespace defaults to the controller's --credential-namespace when omitted
+  secretRef:
+    name: sap-ghe
+    # namespace defaults to the controller's --credential-namespace when omitted

@@ -370,7 +370,7 @@ func (r *GitRepositoryReconciler) resolveCredential(ctx context.Context, gr *cor
 // resolveGitHubCreds resolves the full GitHub App credentials for token minting.
 // It reuses the already-fetched AppInstallation to avoid a second fetch (TOCTOU).
 func (r *GitRepositoryReconciler) resolveGitHubCreds(ctx context.Context, ai *githubv1alpha1.AppInstallation) (githubapp.Credentials, error) {
-	return credentials.Resolve(ctx, r.platformClient, ai.Spec.InstanceRef.Name, "", r.credentialNamespace)
+	return credentials.Resolve(ctx, r.platformClient, ai.Spec.InstanceRef.Name, r.credentialNamespace)
 }
 
 func (r *GitRepositoryReconciler) setResolved(gr *corev1alpha1.GitRepository, status metav1.ConditionStatus, reason, msg string) {

@@ -176,7 +176,7 @@ func (r *AppInstallationReconciler) reconcile(ctx context.Context, ai *githubv1a
 // resolveCredentials looks up the GitHubInstance, selects the credential Secret,
 // and reads the App ID, private key and URL from it.
 func (r *AppInstallationReconciler) resolveCredentials(ctx context.Context, ai *githubv1alpha1.AppInstallation) (githubapp.Credentials, error) {
-	return credentials.Resolve(ctx, r.platformClient, ai.Spec.InstanceRef.Name, ai.Spec.CredentialName, r.credentialNamespace)
+	return credentials.Resolve(ctx, r.platformClient, ai.Spec.InstanceRef.Name, r.credentialNamespace)
 }
 
 // setBoth sets both conditions to False with the same reason/message. Used for

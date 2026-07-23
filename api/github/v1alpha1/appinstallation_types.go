@@ -20,15 +20,11 @@ type InstanceReference struct {
 // the Project to a GitHub App installation on the user's own GitHub org (or
 // user account). Credentials are never supplied here — they are resolved from
 // the referenced GitHubInstance, which the platform owner manages.
+// Each GitHubInstance holds exactly one credential Secret (1:1 mapping).
 type AppInstallationSpec struct {
 	// InstanceRef selects the GitHubInstance that holds the credentials.
 	// +kubebuilder:validation:Required
 	InstanceRef InstanceReference `json:"instanceRef"`
-
-	// CredentialName selects which Secret from the GitHubInstance's secretRefs
-	// to use. Optional when the instance lists exactly one Secret.
-	// +optional
-	CredentialName string `json:"credentialName,omitempty"`
 
 	// Org is the GitHub organization to check the App installation for.
 	// Exactly one of org or user must be set.
