@@ -39,6 +39,9 @@ kubectl -n platform-service-gitops-system create secret generic sap-ghe \
 
 See [docs/gitops-github](docs/gitops-github/README.md) for the platform-owner
 and end-user setup of `GitHubInstance`, `AppInstallation` and `GitRepository`.
+A `GitRepository` authenticates either via an `AppInstallation` (platform GitHub
+App) or a user-provided `Secret` (PAT/SSH); both can `propagateTo` MCPs, writing
+a credential Secret and a Flux `GitRepository` into each target's `flux-system`.
 
 
 ### To Deploy on the cluster

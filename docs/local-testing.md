@@ -56,22 +56,24 @@ kubectl apply -f examples/03-appinstallation.yaml
 kubectl apply -f examples/04-gitrepository.yaml  # add propagateTo (see below)
 ```
 
-Create the ControlPlane the GitRepository propagates to:
+Create the ControlPlane the GitRepository propagates to (see
+`examples/06-controlplane.yaml`):
 
 ```yaml
-# examples/05-controlplane.yaml
-apiVersion: core.openmcp.cloud/v2alpha1
-kind: ManagedControlPlaneV2
+# examples/06-controlplane.yaml
+apiVersion: core.open-control-plane.io/v2alpha1
+kind: ControlPlane
 metadata:
   name: test-mcp
   namespace: my-project
 spec:
-  iam:
-    tokens: []
+  iam: {}
 ```
 
 ```bash
-kubectl apply -f examples/05-controlplane.yaml
+kubectl apply -f examples/06-controlplane.yaml
+# Wait until it is provisioned:
+kubectl -n my-project get controlplane test-mcp -o wide   # PHASE -> Ready
 ```
 
 Add `propagateTo` to the GitRepository (or include it in `examples/04-gitrepository.yaml`):
@@ -108,9 +110,39 @@ kubectl config rename-context "kind-$MCP_CLUSTER" kind-test-mcp
 kubectl config use-context kind-test-mcp
 kubectl create namespace flux-system
 
+# Flux source CRDs must also be installed on the MCP so the controller can create
+# the Flux GitRepository (source.toolkit.fluxcd.io/v1). A freshly provisioned MCP
+# may not have them yet:
+kubectl apply -f https://github.com/fluxcd/source-controller/releases/latest/download/source-controller.crds.yaml
+
 # Token Secret should appear after next reconcile (~10s)
 kubectl -n flux-system get secret gitops-hackaton-test-token
 ```
+
+## 5b. Verify the kind:Secret (bring-your-own credential) path
+
+The Secret path also propagates to MCPs (`examples/05-gitrepository-secret-pat.yaml`),
+copying your credential Secret in verbatim instead of minting a token.
+
+```bash
+kubectl config use-context kind-test-gitops-onboarding
+# Fill in a real PAT/username first (verify it: git ls-remote https://USER:PAT@host/org/repo)
+kubectl apply -f examples/05-gitrepository-secret-pat.yaml
+
+# Per-MCP status: expect phase=Ready, reason=SecretSynced (tokenExpiresAt is null)
+kubectl -n my-project get gitrepository my-infra -o jsonpath='{.status.propagated}' | jq .
+
+# On the MCP: the credential Secret is copied verbatim as <name>-credentials,
+# and a Flux GitRepository references it.
+kubectl config use-context kind-test-mcp
+kubectl -n flux-system get secret my-infra-credentials -o jsonpath='{.data}' | jq 'keys'   # ["password","username"]
+kubectl -n flux-system get gitrepository.source.toolkit.fluxcd.io my-infra -o jsonpath='{.spec.secretRef.name}'
+```
+
+If `status.propagated` shows `FluxFailed` / `SecretCopyFailed` mentioning
+`flux-system` or an unknown `GitRepository` kind, the MCP is missing the
+namespace or the Flux source CRDs — apply them (see the block above) and the next
+reconcile will succeed.
 
 ## 6. Tear down
 

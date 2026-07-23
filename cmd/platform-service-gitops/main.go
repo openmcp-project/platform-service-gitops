@@ -42,6 +42,8 @@ const (
 	controllerName = "gitops.open-control-plane.io"
 	githubGroup    = "github.gitops.open-control-plane.io"
 	verbGet        = "get"
+	verbList       = "list"
+	verbWatch      = "watch"
 	verbPatch      = "patch"
 	verbUpdate     = "update"
 )
@@ -219,7 +221,7 @@ func runCommand(cmd *cobra.Command, _ []string) error {
 					{
 						APIGroups: []string{controllerName, githubGroup},
 						Resources: []string{"gitrepositories", "appinstallations", "kustomizations"},
-						Verbs:     []string{verbGet, "list", "watch"},
+						Verbs:     []string{verbGet, verbList, verbWatch},
 					},
 					{
 						APIGroups: []string{controllerName},
@@ -239,12 +241,17 @@ func runCommand(cmd *cobra.Command, _ []string) error {
 					{
 						APIGroups: []string{"coordination.k8s.io"},
 						Resources: []string{"leases"},
-						Verbs:     []string{verbGet, "list", "watch", "create", verbUpdate, verbPatch, "delete"},
+						Verbs:     []string{verbGet, verbList, verbWatch, "create", verbUpdate, verbPatch, "delete"},
 					},
 					{
 						APIGroups: []string{""},
 						Resources: []string{"events"},
 						Verbs:     []string{"create", verbPatch},
+					},
+					{
+						APIGroups: []string{""},
+						Resources: []string{"secrets"},
+						Verbs:     []string{verbGet, verbList, verbWatch},
 					},
 				},
 			},

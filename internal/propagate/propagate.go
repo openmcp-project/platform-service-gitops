@@ -88,6 +88,31 @@ func Reconcile(
 	return Result{TokenExpiresAt: tok.ExpiresAt, Conflict: conflict}, nil
 }
 
+// ReconcileSecret copies a user-supplied credential Secret verbatim into the MCP
+// and ensures a Flux GitRepository references it. Unlike Reconcile, it mints no
+// token: the user's Secret already carries Flux-format keys (username/password or
+// identity/known_hosts), so Flux consumes it directly. The copied Secret's data is
+// overwritten on every call, so rotating the onboarding Secret propagates here.
+func ReconcileSecret(
+	ctx context.Context,
+	mcpClient client.Client,
+	gitRepo *corev1alpha1.GitRepository,
+	fluxNamespace string,
+	userSecret *corev1.Secret,
+) (Result, error) {
+	secretName := CredentialsSecretName(gitRepo)
+	if err := syncCredentialSecret(ctx, mcpClient, gitRepo, fluxNamespace, secretName, userSecret); err != nil {
+		return Result{}, fmt.Errorf("syncing credential Secret: %w", err)
+	}
+
+	conflict, err := syncFluxGitRepository(ctx, mcpClient, gitRepo, fluxNamespace, secretName)
+	if err != nil {
+		return Result{}, fmt.Errorf("syncing Flux GitRepository: %w", err)
+	}
+
+	return Result{Conflict: conflict}, nil
+}
+
 // Cleanup deletes the Secret and Flux GitRepository we own in the given MCP.
 // Resources not carrying our managed-by annotation are left untouched.
 func Cleanup(
@@ -111,6 +136,14 @@ func Cleanup(
 	if err == nil && secret.Annotations[ManagedByAnnotation] == managedBy {
 		if err := mcpClient.Delete(ctx, secret); client.IgnoreNotFound(err) != nil {
 			return fmt.Errorf("deleting token Secret: %w", err)
+		}
+	}
+
+	credSecret := &corev1.Secret{}
+	err = mcpClient.Get(ctx, types.NamespacedName{Name: CredentialsSecretName(gitRepo), Namespace: fluxNamespace}, credSecret)
+	if err == nil && credSecret.Annotations[ManagedByAnnotation] == managedBy {
+		if err := mcpClient.Delete(ctx, credSecret); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("deleting credential Secret: %w", err)
 		}
 	}
 
@@ -177,6 +210,51 @@ func syncSecret(ctx context.Context, mcpClient client.Client, gitRepo *corev1alp
 	return mcpClient.Update(ctx, existing)
 }
 
+// syncCredentialSecret creates or updates the verbatim credential-copy Secret in
+// the MCP. It carries only the managed-by annotation (no token-expiry) and copies
+// the user Secret's Data map wholesale so all Flux-relevant keys are present.
+func syncCredentialSecret(ctx context.Context, mcpClient client.Client, gitRepo *corev1alpha1.GitRepository, namespace, name string, userSecret *corev1.Secret) error {
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Annotations: map[string]string{
+				ManagedByAnnotation: managedByValue(gitRepo),
+			},
+		},
+		Data: copyData(userSecret.Data),
+		Type: corev1.SecretTypeOpaque,
+	}
+
+	existing := &corev1.Secret{}
+	err := mcpClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, existing)
+	if apierrors.IsNotFound(err) {
+		return mcpClient.Create(ctx, desired)
+	}
+	if err != nil {
+		return fmt.Errorf("getting Secret: %w", err)
+	}
+
+	existing.Data = desired.Data
+	if existing.Annotations == nil {
+		existing.Annotations = map[string]string{}
+	}
+	existing.Annotations[ManagedByAnnotation] = desired.Annotations[ManagedByAnnotation]
+	return mcpClient.Update(ctx, existing)
+}
+
+// copyData returns a deep copy of a Secret data map so the propagated Secret does
+// not alias the source Secret's byte slices.
+func copyData(src map[string][]byte) map[string][]byte {
+	dst := make(map[string][]byte, len(src))
+	for k, v := range src {
+		b := make([]byte, len(v))
+		copy(b, v)
+		dst[k] = b
+	}
+	return dst
+}
+
 // syncFluxGitRepository creates or updates the Flux GitRepository in the MCP.
 // Returns conflict=true when a resource with the same name exists but is not
 // managed by this controller.
@@ -234,6 +312,14 @@ func fluxGitRepositorySpec(gitRepo *corev1alpha1.GitRepository, secretRefName st
 // SecretName returns the name of the Secret written into the MCP for this GitRepository.
 func SecretName(gitRepo *corev1alpha1.GitRepository) string {
 	return gitRepo.Name + "-token"
+}
+
+// CredentialsSecretName returns the name of the Secret written into the MCP for
+// the Secret credential path — a verbatim copy of the user-supplied credential.
+// Distinct from SecretName (the App-path bearer-token Secret) so the two paths
+// never collide within an MCP.
+func CredentialsSecretName(gitRepo *corev1alpha1.GitRepository) string {
+	return gitRepo.Name + "-credentials"
 }
 
 func secretName(gitRepo *corev1alpha1.GitRepository) string {

@@ -21,7 +21,10 @@ type GitRef struct {
 type CredentialRef struct {
 	// +kubebuilder:validation:Required
 	Name string `json:"name"`
+	// Kind of credential provider. Supported values: AppInstallation (platform
+	// GitHub App) and Secret (user-provided PAT or SSH key).
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=AppInstallation;Secret
 	Kind string `json:"kind"`
 	// +kubebuilder:default=""
 	// +optional
