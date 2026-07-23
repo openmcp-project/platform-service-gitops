@@ -55,7 +55,14 @@ func TestMain(m *testing.M) {
 }
 
 func mustVersion() string {
-	cmd := exec.Command("../../hack/common/get-version.sh")
+	// go test sets the working directory to the package directory (test/e2e/),
+	// so we need to walk up to the repo root to find get-version.sh.
+	script := "../../hack/common/get-version.sh"
+	if _, err := os.Stat(script); err != nil {
+		// Fallback: running from repo root (e.g. CI via make test-e2e)
+		script = "hack/common/get-version.sh"
+	}
+	cmd := exec.Command(script)
 	out, err := cmd.Output()
 	if err != nil {
 		panic(fmt.Sprintf("failed to get version: %v", err))
