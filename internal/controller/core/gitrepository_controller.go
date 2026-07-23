@@ -202,10 +202,10 @@ func (r *GitRepositoryReconciler) reconcilePropagate(ctx context.Context, gr *co
 		return controllerconst.RequeueInterval
 	}
 
-	// Track the desired set of ControlPlane names for status cleanup.
+	// Track the desired set of ControlPlanes (keyed by namespace/name) for status cleanup.
 	desiredNames := map[string]struct{}{}
 	for _, t := range targets {
-		desiredNames[t.ControlPlaneName] = struct{}{}
+		desiredNames[propagateKey(t.ControlPlaneNamespace, t.ControlPlaneName)] = struct{}{}
 	}
 
 	var earliest time.Duration
@@ -235,7 +235,10 @@ func (r *GitRepositoryReconciler) reconcileTarget(
 	installationID int64,
 	minter propagate.TokenMinter,
 ) corev1alpha1.PropagateStatus {
-	ps := corev1alpha1.PropagateStatus{ControlPlaneName: target.ControlPlaneName}
+	ps := corev1alpha1.PropagateStatus{
+		ControlPlaneNamespace: target.ControlPlaneNamespace,
+		ControlPlaneName:      target.ControlPlaneName,
+	}
 
 	if target.Pending {
 		ps.Phase = corev1alpha1.PropagatePhasePending
@@ -304,8 +307,8 @@ func (r *GitRepositoryReconciler) reconcileDelete(ctx context.Context, gr *corev
 	var cleanupErrs []error
 	for _, target := range targets {
 		// Always clean up the AccessRequest, regardless of whether cluster access was granted.
-		if err := r.mcpResolver.Cleanup(ctx, gr, target.ControlPlaneName); err != nil {
-			logger.Error(err, "AccessRequest cleanup failed", "controlPlane", target.ControlPlaneName)
+		if err := r.mcpResolver.Cleanup(ctx, gr, target.ControlPlaneNamespace, target.ControlPlaneName); err != nil {
+			logger.Error(err, "AccessRequest cleanup failed", "controlPlaneNamespace", target.ControlPlaneNamespace, "controlPlane", target.ControlPlaneName)
 			cleanupErrs = append(cleanupErrs, err)
 		}
 		if target.Cluster == nil {
@@ -387,10 +390,16 @@ func setCondition(conditions *[]metav1.Condition, c metav1.Condition) {
 	meta.SetStatusCondition(conditions, c)
 }
 
-// setPropagateStatus upserts a PropagateStatus entry by ControlPlaneName.
+// propagateKey is the composite (namespace, name) identity of a propagate target.
+func propagateKey(namespace, name string) string {
+	return namespace + "/" + name
+}
+
+// setPropagateStatus upserts a PropagateStatus entry by (ControlPlaneNamespace, ControlPlaneName).
 func setPropagateStatus(list *[]corev1alpha1.PropagateStatus, ps corev1alpha1.PropagateStatus) {
 	for i := range *list {
-		if (*list)[i].ControlPlaneName == ps.ControlPlaneName {
+		if (*list)[i].ControlPlaneNamespace == ps.ControlPlaneNamespace &&
+			(*list)[i].ControlPlaneName == ps.ControlPlaneName {
 			(*list)[i] = ps
 			return
 		}
@@ -398,11 +407,11 @@ func setPropagateStatus(list *[]corev1alpha1.PropagateStatus, ps corev1alpha1.Pr
 	*list = append(*list, ps)
 }
 
-// filterPropagateStatus removes entries whose ControlPlaneName is not in desired.
+// filterPropagateStatus removes entries whose (namespace, name) is not in desired.
 func filterPropagateStatus(list []corev1alpha1.PropagateStatus, desired map[string]struct{}) []corev1alpha1.PropagateStatus {
 	out := make([]corev1alpha1.PropagateStatus, 0, len(list))
 	for _, ps := range list {
-		if _, ok := desired[ps.ControlPlaneName]; ok {
+		if _, ok := desired[propagateKey(ps.ControlPlaneNamespace, ps.ControlPlaneName)]; ok {
 			out = append(out, ps)
 		}
 	}

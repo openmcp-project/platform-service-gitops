@@ -13,5 +13,19 @@ spec:
     kind: AppInstallation
     group: github.gitops.open-control-plane.io
   propagateTo:
+    # Explicit ControlPlane by name. namespace is required and, together with the
+    # name, uniquely identifies the target MCP.
     - kind: ControlPlane
+      namespace: team-a
       name: my-mcp-prod
+    # Same ControlPlane name in a different namespace is a distinct target.
+    - kind: ControlPlane
+      namespace: team-b
+      name: my-mcp-prod
+    # Select ControlPlanes by label within the given namespace.
+    # Mutually exclusive with name.
+    - kind: ControlPlane
+      namespace: team-a
+      matchLabels:
+        environment: staging
+        team: platform
