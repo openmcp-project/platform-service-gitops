@@ -1,8 +1,4 @@
-version: "3"
-
-includes:
-  shared:
-    taskfile: hack/common/Taskfile_controller.yaml
+version: 3
 
 vars:
   NESTED_MODULES: api
@@ -13,12 +9,19 @@ vars:
   REPO_URL: "https://github.com/openmcp-project/platform-service-gitops"
   ENVTEST_REQUIRED: "true"
   GENERATE_DOCS_INDEX: "false"
+  CHART_COMPONENTS: "[]"
+  CRDS_COMPONENTS: "platform-service-gitops"
+  CRDS_PATH: "{{.ROOT_DIR}}/api/crds/manifests"
+  COMMON_SCRIPT_DIR: "{{.ROOT_DIR}}/hack/common"
+
+includes:
+  shared:
+    taskfile: hack/common/Taskfile_controller.yaml
 
 tasks:
-  # Shims so 'task generate/validate/test' still work without flatten: true.
-  # generate also patches openmcp.cloud/cluster labels back onto CRD manifests
-  # after controller-gen regenerates them (controller-gen strips all hand-edited
-  # metadata fields because it rm -rf the manifests dir before regenerating).
+  # generate overrides shared:generate to also patch openmcp.cloud/cluster labels
+  # back onto CRD manifests after controller-gen strips them (it rm -rf the
+  # manifests dir on every run).
   generate:
     desc: "Run code/manifest generation and patch CRD cluster labels"
     cmds:
