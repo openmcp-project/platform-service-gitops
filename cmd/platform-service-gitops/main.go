@@ -244,6 +244,11 @@ func runCommand(cmd *cobra.Command, _ []string) error {
 						Resources: []string{"events"},
 						Verbs:     []string{"create", verbPatch},
 					},
+					{
+						APIGroups: []string{""},
+						Resources: []string{"secrets"},
+						Verbs:     []string{verbGet, "list", "watch"},
+					},
 				},
 			},
 		})
