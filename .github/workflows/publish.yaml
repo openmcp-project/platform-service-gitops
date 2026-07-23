@@ -41,8 +41,8 @@ jobs:
         id: version
         run: |
           VERSION=$(task version)
-          # Accepts: 0.0.0, v0.0.0, 0.0.0-dev, 0.0.0-dev-<sha>, 0.0.0-rc<N>
-          if [[ ! "$VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-dev(-[0-9a-f]*)?|-rc[0-9]+)?$ ]]; then
+          # Accepts: 0.0.0, 0.0.0-dev, 0.0.0-dev-<sha>, 0.0.0-rc<N>
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-dev(-[0-9a-f]*)?|-rc[0-9]+)?$ ]]; then
             echo "Invalid version format: $VERSION"
             exit 1
           fi
