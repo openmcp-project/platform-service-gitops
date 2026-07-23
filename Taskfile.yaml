@@ -37,3 +37,8 @@ tasks:
     desc: "Run tests"
     cmds:
     - task: shared:test
+
+  version:
+    desc: "Print the project version"
+    cmds:
+    - task: shared:version
