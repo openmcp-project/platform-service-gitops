@@ -1,10 +1,10 @@
 name: E2E Tests
 
 on:
+  pull_request:
   push:
     branches:
       - main
-  pull_request:
 
 permissions:
   contents: read
@@ -13,7 +13,7 @@ jobs:
   test-e2e:
     name: GitRepository propagateTo E2E
     runs-on: ubuntu-latest
-    # Secrets are stored in the "e2e" environment for access control.
+    # Secrets live in the "e2e" environment for access control.
     environment: e2e
     permissions:
       contents: read
