@@ -1,0 +1,15 @@
+# ControlPlane (MCP) — the propagation target for a GitRepository's propagateTo.
+# Create this in the Project namespace on the ONBOARDING cluster; the openmcp
+# operator provisions a dedicated MCP cluster for it. Once it reports Ready, a
+# GitRepository whose propagateTo names this ControlPlane will have its credential
+# Secret + a Flux GitRepository written into the MCP's flux-system namespace.
+#
+# NOTE: the MCP must have Flux installed (the source.toolkit.fluxcd.io CRDs and a
+# flux-system namespace) for propagation to succeed — see docs/local-testing.md.
+apiVersion: core.open-control-plane.io/v2alpha1
+kind: ControlPlane
+metadata:
+  name: test-mcp
+  namespace: my-project
+spec:
+  iam: {}

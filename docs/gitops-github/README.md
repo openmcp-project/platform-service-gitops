@@ -112,6 +112,29 @@ are reported without exposing credential material:
 - `Ready=False` (reason `AuthenticationFailed` / `RepositoryUnreachable`) —
   credential rejected, or the repository could not be reached.
 
+### Propagating a Secret credential to MCPs
+
+Like the AppInstallation flow, a `kind:Secret` GitRepository can set `propagateTo`
+to deliver the source into one or more MCPs. Whereas the App path mints a scoped
+token per MCP, the Secret path copies **your** Secret verbatim: for each target it
+writes the credential into the MCP's `flux-system` namespace as
+`<name>-credentials` (same Flux keys, no translation) and creates a Flux
+`GitRepository` there that references it. Rotating the onboarding Secret updates
+the MCP copies on the next reconcile; deleting the GitRepository removes them.
+
+Per-MCP results appear in `status.propagated[]`:
+
+- `phase: Ready`, `reason: SecretSynced` — credential Secret and Flux
+  `GitRepository` are in place on the MCP.
+- `phase: Pending`, `reason: AccessRequestPending` — waiting for MCP access.
+- `phase: FluxFailed`, `reason: SecretCopyFailed` / `ClusterAccessFailed` — the
+  MCP write failed (e.g. `flux-system` namespace or Flux CRDs missing on the MCP).
+
+Because the copied Secret holds the raw user credential, it is a longer-lived
+credential on the MCP than the App path's short-lived token — use `propagateTo`
+with a Secret credential deliberately.
+
+
 ## Status quick reference
 
 | Resource | Condition | Meaning |
@@ -121,3 +144,5 @@ are reported without exposing credential material:
 | AppInstallation | `AccessVerified` | App authenticated successfully |
 | GitRepository | `CredentialResolved` | credential (AppInstallation or Secret) resolved |
 | GitRepository | `Ready` | credentials resolved, access verified |
+| GitRepository | `status.propagated[].phase` | per-MCP propagation state (`Ready`/`Pending`/`Conflict`/`TokenFailed`/`FluxFailed`) |
+
