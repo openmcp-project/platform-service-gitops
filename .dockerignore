@@ -12,3 +12,6 @@
 
 # Re-include embedded CRD manifests (required by api/crds/crds.go embed)
 !api/crds/manifests/*.yaml
+
+# Re-include pre-built binaries
+!bin/*
