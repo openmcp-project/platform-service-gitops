@@ -86,9 +86,16 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 	esac
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v
-	$(MAKE) cleanup-test-e2e
+test-e2e: manifests generate fmt vet ## Run the e2e tests against an openmcp environment bootstrapped by openmcp-testing.
+	go test -tags=e2e ./test/e2e/ -v -timeout 20m
+
+.PHONY: test-e2e-local
+test-e2e-local: manifests generate ## Run e2e tests locally — reads GitHub App credentials from environment variables.
+	@test -n "$$GITHUB_APP_ID"      || (echo "ERROR: GITHUB_APP_ID not set";      exit 1)
+	@test -n "$$GITHUB_APP_PRIVATE_KEY" || (echo "ERROR: GITHUB_APP_PRIVATE_KEY not set"; exit 1)
+	@test -n "$$GITHUB_ORG"         || (echo "ERROR: GITHUB_ORG not set";         exit 1)
+	@test -n "$$GITHUB_REPO_URL"    || (echo "ERROR: GITHUB_REPO_URL not set";    exit 1)
+	go test -tags=e2e ./test/e2e/ -v -timeout 20m -run TestGitRepositoryPropagation
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests

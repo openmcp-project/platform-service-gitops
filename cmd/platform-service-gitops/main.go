@@ -67,7 +67,7 @@ func main() {
 		Short: "Install CRDs onto the platform and onboarding clusters",
 		RunE:  initCommand,
 	}
-	initCmd.Flags().String("provider-name", "", "Name of this service provider (used to register GVKs).")
+	addCommonFlags(initCmd)
 
 	rootCmd.AddCommand(runCmd, initCmd)
 
@@ -92,6 +92,10 @@ func addCommonFlags(cmd *cobra.Command) {
 		"Namespace inside each MCP where Flux Secrets and GitRepository resources are written.")
 	cmd.Flags().Duration("token-renew-buffer", 15*time.Minute,
 		"How long before token expiry to rotate it (e.g. 15m). The actual expiry comes from GitHub.")
+	// Flags expected by the openmcp-operator when deploying service providers.
+	cmd.Flags().String("provider-name", "", "Name of this service provider.")
+	cmd.Flags().String("environment", "", "Logical environment the provider is running in (passed by openmcp-operator).")
+	cmd.Flags().String("verbosity", "INFO", "Log verbosity level.")
 }
 
 func addServerFlags(cmd *cobra.Command) {
