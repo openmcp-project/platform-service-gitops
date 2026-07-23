@@ -1,0 +1,44 @@
+name: E2E Tests
+
+on:
+  push:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  test-e2e:
+    permissions:
+      contents: read
+    name: Run on Ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+
+      - name: Build controller image
+        run: make docker-build IMG=ghcr.io/openmcp-project/images/platform-service-gitops:$(cat VERSION)
+
+      - name: Run E2E tests
+        env:
+          GITHUB_APP_ID: ${{ secrets.E2E_GITHUB_APP_ID }}
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets.E2E_GITHUB_APP_PRIVATE_KEY }}
+          GITHUB_ORG: ${{ secrets.E2E_GITHUB_ORG }}
+          GITHUB_REPO_URL: ${{ secrets.E2E_GITHUB_REPO_URL }}
+        run: |
+          go mod tidy
+          make test-e2e
