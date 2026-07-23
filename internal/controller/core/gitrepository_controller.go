@@ -42,6 +42,13 @@ const (
 	reasonAuthFailed         = "AuthenticationFailed"
 	reasonRepoUnreachable    = "RepositoryUnreachable"
 
+	// Secret-path propagation reasons (per-MCP status). Distinct from the App
+	// path's "Synced" so status readers can tell a copied user credential from a
+	// minted token.
+	reasonSecretSynced        = "SecretSynced"
+	reasonSecretCopyFailed    = "SecretCopyFailed"
+	reasonClusterAccessFailed = "ClusterAccessFailed"
+
 	kindAppInstallation = "AppInstallation"
 	kindSecret          = "Secret"
 
@@ -55,11 +62,11 @@ const (
 )
 
 // GitRepositoryReconciler resolves a GitRepository's credentialRef and reports
-// readiness. For kind:AppInstallation it additionally syncs scoped tokens and
-// Flux GitRepository resources into each MCP listed in propagateTo and keeps
-// per-MCP status up to date. For kind:Secret it validates the user-supplied
-// credential against the repository on the onboarding cluster only; the Secret
-// path does not propagate (propagation requires per-MCP scoped App tokens).
+// readiness. For both credential kinds it additionally syncs a credential Secret
+// and a Flux GitRepository into each MCP listed in propagateTo and keeps per-MCP
+// status up to date: kind:AppInstallation mints scoped bearer tokens, while
+// kind:Secret copies the user-supplied credential Secret in verbatim (validated
+// against the repository on the onboarding cluster first).
 //
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gitops.open-control-plane.io,resources=gitrepositories/status,verbs=get;update;patch
@@ -79,6 +86,12 @@ type GitRepositoryReconciler struct {
 	credentialNamespace string
 	fluxNamespace       string
 	tokenRenewBuffer    time.Duration
+
+	// validateAccess verifies a resolved Secret credential against the repository
+	// via a live ls-remote. It defaults to credentials.ValidateAccess and is
+	// overridable in tests so the resolve+propagate path can be exercised without
+	// network access.
+	validateAccess func(ctx context.Context, url string, cred *credentials.Credential) error
 }
 
 // NewGitRepositoryReconciler creates a reconciler.
@@ -97,7 +110,16 @@ func NewGitRepositoryReconciler(
 		credentialNamespace: credentialNamespace,
 		fluxNamespace:       fluxNamespace,
 		tokenRenewBuffer:    tokenRenewBuffer,
+		validateAccess:      credentials.ValidateAccess,
 	}
+}
+
+// WithValidateAccess overrides the credential-access validator. It exists so
+// tests can exercise the resolve+propagate path without network access; the
+// default (credentials.ValidateAccess) is used in production.
+func (r *GitRepositoryReconciler) WithValidateAccess(fn func(ctx context.Context, url string, cred *credentials.Credential) error) *GitRepositoryReconciler {
+	r.validateAccess = fn
+	return r
 }
 
 // SetupWithManager registers the reconciler with the controller-runtime manager.
@@ -176,13 +198,13 @@ func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	patch := client.MergeFrom(gr.DeepCopy())
 
 	// Resolve credential.
-	ai, installationID, resolved, reason := r.resolveCredential(ctx, gr)
+	rc := r.resolveCredential(ctx, gr)
 
-	if !resolved {
+	if !rc.resolved {
 		setCondition(&gr.Status.Conditions, metav1.Condition{
 			Type:               condReady,
 			Status:             metav1.ConditionFalse,
-			Reason:             reason,
+			Reason:             rc.reason,
 			Message:            "Credentials are not resolved; see the CredentialResolved condition.",
 			ObservedGeneration: gr.Generation,
 		})
@@ -193,13 +215,18 @@ func (r *GitRepositoryReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: controllerconst.RequeueInterval}, nil
 	}
 
-	// Propagate to MCPs. Only the AppInstallation path can propagate: it yields a
-	// non-nil AppInstallation, which is required to mint per-MCP scoped tokens.
-	// The Secret path resolves+validates on the onboarding cluster only.
+	// Propagate to MCPs. The AppInstallation path mints per-MCP scoped tokens; the
+	// Secret path copies the user's credential Secret in verbatim. The Secret path
+	// only propagates when propagateTo is set — otherwise it is onboarding-cluster
+	// validation only, preserving prior behavior.
 	var requeueAfter time.Duration
 	readyMessage := "Credentials resolved; repository access verified."
-	if ai != nil {
-		requeueAfter = r.reconcilePropagate(ctx, gr, ai, installationID)
+	switch {
+	case rc.appInstallation != nil:
+		requeueAfter = r.reconcilePropagate(ctx, gr, rc.appInstallation, rc.installationID)
+		readyMessage = "Credentials resolved; propagation in progress."
+	case rc.userSecret != nil && len(gr.Spec.PropagateToControlPlanes) > 0:
+		requeueAfter = r.reconcilePropagateSecret(ctx, gr, rc.userSecret)
 		readyMessage = "Credentials resolved; propagation in progress."
 	}
 
@@ -330,6 +357,82 @@ func (r *GitRepositoryReconciler) reconcileTarget(
 	return ps
 }
 
+// reconcilePropagateSecret copies a user-supplied credential Secret into every
+// propagateTo target MCP and ensures a Flux GitRepository references it. It is the
+// Secret-path analogue of reconcilePropagate: no token minting, so no per-target
+// rotation deadline — it always returns 0 and the caller requeues on the normal
+// interval.
+func (r *GitRepositoryReconciler) reconcilePropagateSecret(ctx context.Context, gr *corev1alpha1.GitRepository, userSecret *corev1.Secret) time.Duration {
+	logger := log.FromContext(ctx)
+
+	targets, err := r.mcpResolver.Resolve(ctx, gr, r.onboardingClient)
+	if err != nil {
+		logger.Error(err, "failed to resolve propagateTo targets")
+		return controllerconst.RequeueInterval
+	}
+
+	desiredNames := map[string]struct{}{}
+	for _, t := range targets {
+		desiredNames[t.ControlPlaneName] = struct{}{}
+	}
+
+	for _, target := range targets {
+		ps := r.reconcileTargetSecret(ctx, gr, target, userSecret)
+		setPropagateStatus(&gr.Status.Propagated, ps)
+	}
+
+	gr.Status.Propagated = filterPropagateStatus(gr.Status.Propagated, desiredNames)
+
+	return 0
+}
+
+// reconcileTargetSecret processes a single MCP target for the Secret path and
+// returns its status. There is no token, so TokenExpiresAt is left nil and copy
+// failures surface as FluxFailed.
+func (r *GitRepositoryReconciler) reconcileTargetSecret(
+	ctx context.Context,
+	gr *corev1alpha1.GitRepository,
+	target mcpaccess.ResolvedTarget,
+	userSecret *corev1.Secret,
+) corev1alpha1.PropagateStatus {
+	ps := corev1alpha1.PropagateStatus{ControlPlaneName: target.ControlPlaneName}
+
+	if target.Pending {
+		ps.Phase = corev1alpha1.PropagatePhasePending
+		ps.Reason = "AccessRequestPending"
+		ps.Message = "Waiting for MCP cluster access to be granted."
+		return ps
+	}
+	if target.Cluster == nil {
+		ps.Phase = corev1alpha1.PropagatePhaseFluxFailed
+		ps.Reason = reasonClusterAccessFailed
+		ps.Message = "MCP cluster access could not be obtained."
+		return ps
+	}
+
+	result, err := propagate.ReconcileSecret(ctx, target.Cluster.Client(), gr, r.fluxNamespace, userSecret)
+	if err != nil {
+		ps.Phase = corev1alpha1.PropagatePhaseFluxFailed
+		ps.Reason = reasonSecretCopyFailed
+		ps.Message = err.Error()
+		return ps
+	}
+
+	if result.Conflict {
+		ps.Phase = corev1alpha1.PropagatePhaseConflict
+		ps.Reason = "FluxGitRepositoryConflict"
+		ps.Message = fmt.Sprintf(
+			"A Flux GitRepository named %q already exists in %s/%s without the managed-by annotation; will not overwrite.",
+			gr.Name, r.fluxNamespace, gr.Name)
+		return ps
+	}
+
+	ps.Phase = corev1alpha1.PropagatePhaseReady
+	ps.Reason = reasonSecretSynced
+	ps.Message = "Credential Secret and Flux GitRepository are up to date."
+	return ps
+}
+
 // reconcileDelete removes owned resources from all MCPs and then removes the finalizer.
 func (r *GitRepositoryReconciler) reconcileDelete(ctx context.Context, gr *corev1alpha1.GitRepository) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -373,13 +476,27 @@ func (r *GitRepositoryReconciler) reconcileDelete(ctx context.Context, gr *corev
 	return ctrl.Result{}, nil
 }
 
+// resolvedCredential carries the outcome of credential resolution across both
+// credential kinds. Exactly one of appInstallation / userSecret is non-nil on
+// success: appInstallation drives the token-minting propagation path, userSecret
+// drives the verbatim copy-in propagation path.
+type resolvedCredential struct {
+	resolved bool
+	reason   string
+
+	// AppInstallation path.
+	appInstallation *githubv1alpha1.AppInstallation
+	installationID  int64
+
+	// Secret path: the user-supplied credential Secret, copied verbatim into MCPs.
+	userSecret *corev1.Secret
+}
+
 // resolveCredential dispatches on credentialRef.kind and sets the
-// CredentialResolved condition. It returns the AppInstallation (nil for the
-// Secret path), its installation ID, whether resolution succeeded, and a reason
-// code. Only the AppInstallation path yields a non-nil AppInstallation, which is
-// what enables propagateTo — the Secret path is onboarding-cluster validation
-// only and never propagates (propagation requires per-MCP scoped App tokens).
-func (r *GitRepositoryReconciler) resolveCredential(ctx context.Context, gr *corev1alpha1.GitRepository) (*githubv1alpha1.AppInstallation, int64, bool, string) {
+// CredentialResolved condition. On success it returns a resolvedCredential whose
+// appInstallation (AppInstallation path) or userSecret (Secret path) is set; that
+// is what the reconcile loop propagates to the MCPs named in propagateTo.
+func (r *GitRepositoryReconciler) resolveCredential(ctx context.Context, gr *corev1alpha1.GitRepository) resolvedCredential {
 	switch gr.Spec.CredentialRef.Kind {
 	case kindAppInstallation:
 		return r.resolveAppInstallation(ctx, gr)
@@ -389,13 +506,13 @@ func (r *GitRepositoryReconciler) resolveCredential(ctx context.Context, gr *cor
 		r.setResolved(gr, metav1.ConditionFalse, reasonUnsupportedKind,
 			fmt.Sprintf("credentialRef.kind %q is not supported; supported kinds are %q and %q.",
 				gr.Spec.CredentialRef.Kind, kindAppInstallation, kindSecret))
-		return nil, 0, false, reasonUnsupportedKind
+		return resolvedCredential{reason: reasonUnsupportedKind}
 	}
 }
 
 // resolveAppInstallation resolves the credentialRef to an AppInstallation and
 // verifies (via its status) that the App is installed.
-func (r *GitRepositoryReconciler) resolveAppInstallation(ctx context.Context, gr *corev1alpha1.GitRepository) (*githubv1alpha1.AppInstallation, int64, bool, string) {
+func (r *GitRepositoryReconciler) resolveAppInstallation(ctx context.Context, gr *corev1alpha1.GitRepository) resolvedCredential {
 	ref := gr.Spec.CredentialRef
 
 	ai := &githubv1alpha1.AppInstallation{}
@@ -403,22 +520,27 @@ func (r *GitRepositoryReconciler) resolveAppInstallation(ctx context.Context, gr
 		if apierrors.IsNotFound(err) {
 			r.setResolved(gr, metav1.ConditionFalse, reasonCredentialNotFound,
 				fmt.Sprintf("AppInstallation %s not found in namespace %s.", ref.Name, gr.Namespace))
-			return nil, 0, false, reasonCredentialNotFound
+			return resolvedCredential{reason: reasonCredentialNotFound}
 		}
 		r.setResolved(gr, metav1.ConditionFalse, reasonCredentialNotFound,
 			fmt.Sprintf("Fetching AppInstallation %s failed: %v.", ref.Name, err))
-		return nil, 0, false, reasonCredentialNotFound
+		return resolvedCredential{reason: reasonCredentialNotFound}
 	}
 
 	if !meta.IsStatusConditionTrue(ai.Status.Conditions, appInstalledCondition) || ai.Status.InstallationID == 0 {
 		r.setResolved(gr, metav1.ConditionFalse, reasonAppNotInstalled,
 			fmt.Sprintf("AppInstallation %s is not ready (App not installed yet).", ref.Name))
-		return nil, 0, false, reasonAppNotInstalled
+		return resolvedCredential{reason: reasonAppNotInstalled}
 	}
 
 	r.setResolved(gr, metav1.ConditionTrue, reasonCredentialFound,
 		fmt.Sprintf("Resolved via AppInstallation %s (installation %d).", ref.Name, ai.Status.InstallationID))
-	return ai, ai.Status.InstallationID, true, reasonCredentialFound
+	return resolvedCredential{
+		resolved:        true,
+		reason:          reasonCredentialFound,
+		appInstallation: ai,
+		installationID:  ai.Status.InstallationID,
+	}
 }
 
 // resolveGitHubCreds resolves the full GitHub App credentials for token minting.
@@ -431,9 +553,9 @@ func (r *GitRepositoryReconciler) resolveGitHubCreds(ctx context.Context, ai *gi
 // GitRepository's own namespace and verifies it by performing a live ls-remote
 // against the repository. Unlike the AppInstallation path there is no upstream
 // controller vouching for the credential, so access is validated here directly.
-// It returns a nil AppInstallation and zero installation ID: the Secret path
-// never participates in propagateTo (which requires per-MCP scoped App tokens).
-func (r *GitRepositoryReconciler) resolveSecret(ctx context.Context, gr *corev1alpha1.GitRepository) (*githubv1alpha1.AppInstallation, int64, bool, string) {
+// On success it returns the raw Secret so the reconcile loop can copy it verbatim
+// into each MCP named in propagateTo.
+func (r *GitRepositoryReconciler) resolveSecret(ctx context.Context, gr *corev1alpha1.GitRepository) resolvedCredential {
 	ref := gr.Spec.CredentialRef
 
 	// The Secret must live in the GitRepository's own namespace. Reading Secrets
@@ -443,11 +565,11 @@ func (r *GitRepositoryReconciler) resolveSecret(ctx context.Context, gr *corev1a
 		if apierrors.IsNotFound(err) {
 			r.setResolved(gr, metav1.ConditionFalse, reasonCredentialNotFound,
 				fmt.Sprintf("Secret %s not found in namespace %s.", ref.Name, gr.Namespace))
-			return nil, 0, false, reasonCredentialNotFound
+			return resolvedCredential{reason: reasonCredentialNotFound}
 		}
 		r.setResolved(gr, metav1.ConditionFalse, reasonCredentialNotFound,
 			fmt.Sprintf("Fetching Secret %s failed: %v.", ref.Name, err))
-		return nil, 0, false, reasonCredentialNotFound
+		return resolvedCredential{reason: reasonCredentialNotFound}
 	}
 
 	cred, err := credentials.ResolveSecret(secret)
@@ -455,13 +577,13 @@ func (r *GitRepositoryReconciler) resolveSecret(ctx context.Context, gr *corev1a
 		// Error messages here describe the Secret shape, never its contents.
 		r.setResolved(gr, metav1.ConditionFalse, reasonUnsupportedSecret,
 			fmt.Sprintf("Secret %s: %v.", ref.Name, err))
-		return nil, 0, false, reasonUnsupportedSecret
+		return resolvedCredential{reason: reasonUnsupportedSecret}
 	}
 
 	// Bound the live ls-remote so a slow or hung host cannot block the worker.
 	validateCtx, cancel := context.WithTimeout(ctx, validateAccessTimeout)
 	defer cancel()
-	if err := credentials.ValidateAccess(validateCtx, gr.Spec.URL, cred); err != nil {
+	if err := r.validateAccess(validateCtx, gr.Spec.URL, cred); err != nil {
 		// credentials errors are classified and carry no secret material.
 		reason := reasonRepoUnreachable
 		if errors.Is(err, credentials.ErrAuthFailed) {
@@ -469,12 +591,16 @@ func (r *GitRepositoryReconciler) resolveSecret(ctx context.Context, gr *corev1a
 		}
 		r.setResolved(gr, metav1.ConditionFalse, reason,
 			fmt.Sprintf("Secret %s: %v.", ref.Name, err))
-		return nil, 0, false, reason
+		return resolvedCredential{reason: reason}
 	}
 
 	r.setResolved(gr, metav1.ConditionTrue, reasonCredentialFound,
 		fmt.Sprintf("Resolved via Secret %s; repository access verified.", ref.Name))
-	return nil, 0, true, reasonCredentialFound
+	return resolvedCredential{
+		resolved:   true,
+		reason:     reasonCredentialFound,
+		userSecret: secret,
+	}
 }
 
 func (r *GitRepositoryReconciler) setResolved(gr *corev1alpha1.GitRepository, status metav1.ConditionStatus, reason, msg string) {
