@@ -376,7 +376,7 @@ func (r *GitRepositoryReconciler) reconcilePropagateSecret(ctx context.Context, 
 
 	desiredNames := map[string]struct{}{}
 	for _, t := range targets {
-		desiredNames[t.ControlPlaneName] = struct{}{}
+		desiredNames[propagateKey(t.ControlPlaneNamespace, t.ControlPlaneName)] = struct{}{}
 	}
 
 	for _, target := range targets {
@@ -398,7 +398,10 @@ func (r *GitRepositoryReconciler) reconcileTargetSecret(
 	target mcpaccess.ResolvedTarget,
 	userSecret *corev1.Secret,
 ) corev1alpha1.PropagateStatus {
-	ps := corev1alpha1.PropagateStatus{ControlPlaneName: target.ControlPlaneName}
+	ps := corev1alpha1.PropagateStatus{
+		ControlPlaneNamespace: target.ControlPlaneNamespace,
+		ControlPlaneName:      target.ControlPlaneName,
+	}
 
 	if target.Pending {
 		ps.Phase = corev1alpha1.PropagatePhasePending

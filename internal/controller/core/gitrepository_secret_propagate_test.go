@@ -49,7 +49,7 @@ func (f *fakeMCPResolver) Resolve(_ context.Context, _ *corev1alpha1.GitReposito
 	}}, nil
 }
 
-func (*fakeMCPResolver) Cleanup(_ context.Context, _ *corev1alpha1.GitRepository, _ string) error {
+func (*fakeMCPResolver) Cleanup(_ context.Context, _ *corev1alpha1.GitRepository, _ string, _ string) error {
 	return nil
 }
 
