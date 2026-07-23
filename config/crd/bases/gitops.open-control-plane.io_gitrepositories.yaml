@@ -102,7 +102,7 @@ spec:
                         type: string
                       description: |-
                         MatchLabels selects ControlPlanes by label. All matching ControlPlanes in the
-                        GitRepository's namespace receive a token and Flux GitRepository.
+                        target namespace receive a token and Flux GitRepository.
                         Mutually exclusive with name.
                       type: object
                     name:
@@ -110,8 +110,16 @@ spec:
                         Name is the explicit name of the target ControlPlane.
                         Mutually exclusive with matchLabels.
                       type: string
+                    namespace:
+                      description: |-
+                        Namespace is the namespace (on the onboarding cluster) in which the target
+                        ControlPlane(s) live. name and matchLabels are both resolved within this
+                        namespace. Together with the ControlPlane name it uniquely identifies the
+                        target MCP, so the same ControlPlane name may be used across namespaces.
+                      type: string
                   required:
                   - kind
+                  - namespace
                   type: object
                 type: array
               ref:
@@ -214,6 +222,10 @@ spec:
                       description: ControlPlaneName is the name of the ControlPlane
                         this entry refers to.
                       type: string
+                    controlPlaneNamespace:
+                      description: ControlPlaneNamespace is the namespace of the ControlPlane
+                        this entry refers to.
+                      type: string
                     message:
                       description: Message is a human-readable description of the
                         current phase.
@@ -240,9 +252,11 @@ spec:
                       type: string
                   required:
                   - controlPlaneName
+                  - controlPlaneNamespace
                   type: object
                 type: array
                 x-kubernetes-list-map-keys:
+                - controlPlaneNamespace
                 - controlPlaneName
                 x-kubernetes-list-type: map
             type: object

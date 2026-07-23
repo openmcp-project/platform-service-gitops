@@ -1,0 +1,9 @@
+apiVersion: github.gitops.open-control-plane.io/v1alpha1
+kind: AppInstallation
+metadata:
+  name: app-connection
+  namespace: default
+spec:
+  instanceRef:
+    name: github
+  org: "{{ .GitHubOrg }}"

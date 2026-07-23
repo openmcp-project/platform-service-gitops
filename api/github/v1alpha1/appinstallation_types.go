@@ -67,6 +67,7 @@ type AppInstallationStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,categories={gitops,openmcp}
+// +kubebuilder:metadata:labels="openmcp.cloud/cluster=onboarding"
 // +kubebuilder:printcolumn:name="INSTANCE",type="string",JSONPath=".spec.instanceRef.name"
 // +kubebuilder:printcolumn:name="ORG",type="string",JSONPath=".spec.org"
 // +kubebuilder:printcolumn:name="INSTALLED",type="string",JSONPath=".status.conditions[?(@.type=='AppInstalled')].status"

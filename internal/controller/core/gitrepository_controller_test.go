@@ -35,7 +35,7 @@ func (noopResolver) Resolve(_ context.Context, _ *corev1alpha1.GitRepository, _ 
 	return nil, nil
 }
 
-func (noopResolver) Cleanup(_ context.Context, _ *corev1alpha1.GitRepository, _ string) error {
+func (noopResolver) Cleanup(_ context.Context, _ *corev1alpha1.GitRepository, _ string, _ string) error {
 	return nil
 }
 

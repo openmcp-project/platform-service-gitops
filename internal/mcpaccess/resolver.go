@@ -43,6 +43,8 @@ const (
 
 // ResolvedTarget is the result of resolving one PropagateTarget entry.
 type ResolvedTarget struct {
+	// ControlPlaneNamespace is the namespace of the ControlPlane on the onboarding cluster.
+	ControlPlaneNamespace string
 	// ControlPlaneName is the name of the ControlPlane on the onboarding cluster.
 	ControlPlaneName string
 	// Cluster is the MCP cluster — nil if access is still pending or failed.
@@ -62,7 +64,7 @@ type Resolver interface {
 	// Cleanup deletes the AccessRequest on the platform cluster for a single
 	// (GitRepository, ControlPlane) pair — called when a target is removed from
 	// propagateTo or when the GitRepository itself is deleted.
-	Cleanup(ctx context.Context, gitRepo *corev1alpha1.GitRepository, controlPlaneName string) error
+	Cleanup(ctx context.Context, gitRepo *corev1alpha1.GitRepository, controlPlaneNamespace, controlPlaneName string) error
 }
 
 type resolver struct {
@@ -81,16 +83,16 @@ func NewResolver(platformClient client.Client, controllerNamespace string) Resol
 }
 
 func (r *resolver) Resolve(ctx context.Context, gitRepo *corev1alpha1.GitRepository, onboardingClient client.Client) ([]ResolvedTarget, error) {
-	names, err := resolveNames(ctx, gitRepo, onboardingClient)
+	refs, err := resolveNames(ctx, gitRepo, onboardingClient)
 	if err != nil {
 		return nil, err
 	}
 
-	results := make([]ResolvedTarget, 0, len(names))
-	for _, name := range names {
-		rt, err := r.resolveOne(ctx, gitRepo, name)
+	results := make([]ResolvedTarget, 0, len(refs))
+	for _, ref := range refs {
+		rt, err := r.resolveOne(ctx, gitRepo, ref.Namespace, ref.Name)
 		if err != nil {
-			return nil, fmt.Errorf("resolving MCP %q: %w", name, err)
+			return nil, fmt.Errorf("resolving MCP %q/%q: %w", ref.Namespace, ref.Name, err)
 		}
 		results = append(results, rt)
 	}
@@ -100,15 +102,15 @@ func (r *resolver) Resolve(ctx context.Context, gitRepo *corev1alpha1.GitReposit
 // resolveOne mirrors crossplane's setupClusterAccess:
 //  1. Ensure the AccessRequest exists (create/update, non-blocking).
 //  2. Check status — pending → Pending:true, denied → error, granted → build cluster.
-func (r *resolver) resolveOne(ctx context.Context, gitRepo *corev1alpha1.GitRepository, controlPlaneName string) (ResolvedTarget, error) {
-	result := ResolvedTarget{ControlPlaneName: controlPlaneName}
+func (r *resolver) resolveOne(ctx context.Context, gitRepo *corev1alpha1.GitRepository, controlPlaneNamespace, controlPlaneName string) (ResolvedTarget, error) {
+	result := ResolvedTarget{ControlPlaneNamespace: controlPlaneNamespace, ControlPlaneName: controlPlaneName}
 
-	mcpNamespace, err := libutils.StableMCPNamespace(controlPlaneName, gitRepo.Namespace)
+	mcpNamespace, err := libutils.StableMCPNamespace(controlPlaneName, controlPlaneNamespace)
 	if err != nil {
 		return result, fmt.Errorf("computing MCP namespace for %q: %w", controlPlaneName, err)
 	}
 
-	arName := clusteraccess.StableRequestNameFromLocalName(controllerName, AccessLocalName(gitRepo, controlPlaneName))
+	arName := clusteraccess.StableRequestNameFromLocalName(controllerName, AccessLocalName(gitRepo, controlPlaneNamespace, controlPlaneName))
 	ar := &clustersv1alpha1.AccessRequest{}
 
 	// Step 1: Ensure the AccessRequest exists on the platform cluster.
@@ -204,8 +206,8 @@ func (r *resolver) clusterFromAccessRequest(ctx context.Context, ar *clustersv1a
 	return cl, nil
 }
 
-func (r *resolver) Cleanup(ctx context.Context, gitRepo *corev1alpha1.GitRepository, controlPlaneName string) error {
-	arName := clusteraccess.StableRequestNameFromLocalName(controllerName, AccessLocalName(gitRepo, controlPlaneName))
+func (r *resolver) Cleanup(ctx context.Context, gitRepo *corev1alpha1.GitRepository, controlPlaneNamespace, controlPlaneName string) error {
+	arName := clusteraccess.StableRequestNameFromLocalName(controllerName, AccessLocalName(gitRepo, controlPlaneNamespace, controlPlaneName))
 	ar := &clustersv1alpha1.AccessRequest{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      arName,
@@ -221,11 +223,27 @@ func (r *resolver) Cleanup(ctx context.Context, gitRepo *corev1alpha1.GitReposit
 	return nil
 }
 
-// resolveNames expands all PropagateTarget entries into concrete ControlPlane names,
-// deduplicating across entries.
-func resolveNames(ctx context.Context, gitRepo *corev1alpha1.GitRepository, onboardingClient client.Client) ([]string, error) {
+// targetRef is a concrete (namespace, name) ControlPlane reference resolved from
+// a PropagateTarget entry.
+type targetRef struct {
+	Namespace string
+	Name      string
+}
+
+// resolveNames expands all PropagateTarget entries into concrete ControlPlane
+// references, deduplicating across entries by (namespace, name).
+func resolveNames(ctx context.Context, gitRepo *corev1alpha1.GitRepository, onboardingClient client.Client) ([]targetRef, error) {
 	seen := map[string]struct{}{}
-	var names []string
+	var refs []targetRef
+
+	add := func(namespace, name string) {
+		key := namespace + "/" + name
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		refs = append(refs, targetRef{Namespace: namespace, Name: name})
+	}
 
 	for _, target := range gitRepo.Spec.PropagateToControlPlanes {
 		if target.Kind != corev1alpha1.PropagateTargetKindControlPlane {
@@ -233,35 +251,28 @@ func resolveNames(ctx context.Context, gitRepo *corev1alpha1.GitRepository, onbo
 		}
 
 		if target.Name != "" {
-			if _, ok := seen[target.Name]; !ok {
-				seen[target.Name] = struct{}{}
-				names = append(names, target.Name)
-			}
+			add(target.Namespace, target.Name)
 			continue
 		}
 
 		list := &corev2alpha1.ControlPlaneList{}
 		if err := onboardingClient.List(ctx, list,
-			client.InNamespace(gitRepo.Namespace),
+			client.InNamespace(target.Namespace),
 			client.MatchingLabels(target.MatchLabels),
 		); err != nil {
 			return nil, fmt.Errorf("listing ControlPlanes for matchLabels: %w", err)
 		}
 		for i := range list.Items {
-			n := list.Items[i].Name
-			if _, ok := seen[n]; !ok {
-				seen[n] = struct{}{}
-				names = append(names, n)
-			}
+			add(target.Namespace, list.Items[i].Name)
 		}
 	}
-	return names, nil
+	return refs, nil
 }
 
 // AccessLocalName returns the stable local name used to derive the AccessRequest
 // name for a given (GitRepository, ControlPlane) pair.
-func AccessLocalName(gitRepo *corev1alpha1.GitRepository, controlPlaneName string) string {
-	return fmt.Sprintf("%s--%s--%s", gitRepo.Namespace, gitRepo.Name, controlPlaneName)
+func AccessLocalName(gitRepo *corev1alpha1.GitRepository, controlPlaneNamespace, controlPlaneName string) string {
+	return fmt.Sprintf("%s--%s--%s--%s", gitRepo.Namespace, gitRepo.Name, controlPlaneNamespace, controlPlaneName)
 }
 
 // mcpPermissions returns the RBAC permissions the controller needs in each MCP.

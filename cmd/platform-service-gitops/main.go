@@ -69,7 +69,7 @@ func main() {
 		Short: "Install CRDs onto the platform and onboarding clusters",
 		RunE:  initCommand,
 	}
-	initCmd.Flags().String("provider-name", "", "Name of this service provider (used to register GVKs).")
+	addCommonFlags(initCmd)
 
 	rootCmd.AddCommand(runCmd, initCmd)
 
@@ -94,6 +94,10 @@ func addCommonFlags(cmd *cobra.Command) {
 		"Namespace inside each MCP where Flux Secrets and GitRepository resources are written.")
 	cmd.Flags().Duration("token-renew-buffer", 15*time.Minute,
 		"How long before token expiry to rotate it (e.g. 15m). The actual expiry comes from GitHub.")
+	// Flags expected by the openmcp-operator when deploying service providers.
+	cmd.Flags().String("provider-name", "", "Name of this service provider.")
+	cmd.Flags().String("environment", "", "Logical environment the provider is running in (passed by openmcp-operator).")
+	cmd.Flags().String("verbosity", "INFO", "Log verbosity level.")
 }
 
 func addServerFlags(cmd *cobra.Command) {
@@ -125,11 +129,10 @@ func initCommand(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to initialize platform cluster: %w", err)
 	}
 	providerName, _ := cmd.Flags().GetString("provider-name")
-	runInit(ctrl.SetupSignalHandler(), platformCluster, providerName)
-	return nil
+	return runInit(ctrl.SetupSignalHandler(), platformCluster, providerName)
 }
 
-func runInit(ctx context.Context, platformCluster *clusters.Cluster, providerName string) {
+func runInit(ctx context.Context, platformCluster *clusters.Cluster, providerName string) error {
 	logger.Info("Running init")
 
 	clusterAccessMgr := clusteraccess.NewClusterAccessManager(
@@ -146,14 +149,12 @@ func runInit(ctx context.Context, platformCluster *clusters.Cluster, providerNam
 			}}},
 		})
 	if err != nil {
-		logger.Error(err, "Failed to obtain onboarding cluster for init")
-		return
+		return fmt.Errorf("failed to obtain onboarding cluster for init: %w", err)
 	}
 
 	crdList, err := crds.CRDs()
 	if err != nil {
-		logger.Error(err, "Failed to load CRDs")
-		return
+		return fmt.Errorf("failed to load CRDs: %w", err)
 	}
 
 	crdMgr := crdutil.NewCRDManager(openmcpconsts.ClusterLabel, func() ([]*apiextv1.CustomResourceDefinition, error) {
@@ -163,7 +164,7 @@ func runInit(ctx context.Context, platformCluster *clusters.Cluster, providerNam
 	crdMgr.AddCRDLabelToClusterMapping(clustersv1alpha1.PURPOSE_ONBOARDING, onboardingCluster)
 
 	if err := crdMgr.CreateOrUpdateCRDs(ctx, &logger); err != nil {
-		logger.Error(err, "Failed to create or update CRDs")
+		return fmt.Errorf("failed to create or update CRDs: %w", err)
 	}
 
 	if providerName != "" {
@@ -171,6 +172,7 @@ func runInit(ctx context.Context, platformCluster *clusters.Cluster, providerNam
 	}
 
 	logger.Info("Init complete")
+	return nil
 }
 
 // nolint:gocyclo

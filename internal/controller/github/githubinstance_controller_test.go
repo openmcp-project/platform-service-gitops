@@ -14,6 +14,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/openmcp-project/controller-utils/pkg/clusters"
+
 	githubv1alpha1 "github.com/openmcp-project/platform-service-gitops/api/github/v1alpha1"
 	controller "github.com/openmcp-project/platform-service-gitops/internal/controller/github"
 )
