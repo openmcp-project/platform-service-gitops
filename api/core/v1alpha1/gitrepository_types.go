@@ -45,13 +45,20 @@ type PropagateTarget struct {
 	// +kubebuilder:validation:Required
 	Kind PropagateTargetKind `json:"kind"`
 
+	// Namespace is the namespace (on the onboarding cluster) in which the target
+	// ControlPlane(s) live. name and matchLabels are both resolved within this
+	// namespace. Together with the ControlPlane name it uniquely identifies the
+	// target MCP, so the same ControlPlane name may be used across namespaces.
+	// +kubebuilder:validation:Required
+	Namespace string `json:"namespace"`
+
 	// Name is the explicit name of the target ControlPlane.
 	// Mutually exclusive with matchLabels.
 	// +optional
 	Name string `json:"name,omitempty"`
 
 	// MatchLabels selects ControlPlanes by label. All matching ControlPlanes in the
-	// GitRepository's namespace receive a token and Flux GitRepository.
+	// target namespace receive a token and Flux GitRepository.
 	// Mutually exclusive with name.
 	// +optional
 	MatchLabels map[string]string `json:"matchLabels,omitempty"`
@@ -73,6 +80,10 @@ const (
 
 // PropagateStatus holds the per-MCP reconciliation state for one resolved propagateTo target.
 type PropagateStatus struct {
+	// ControlPlaneNamespace is the namespace of the ControlPlane this entry refers to.
+	// +kubebuilder:validation:Required
+	ControlPlaneNamespace string `json:"controlPlaneNamespace"`
+
 	// ControlPlaneName is the name of the ControlPlane this entry refers to.
 	// +kubebuilder:validation:Required
 	ControlPlaneName string `json:"controlPlaneName"`
@@ -138,6 +149,7 @@ type GitRepositoryStatus struct {
 	// Propagated holds per-MCP status for each resolved entry in spec.propagateTo.
 	// +optional
 	// +listType=map
+	// +listMapKey=controlPlaneNamespace
 	// +listMapKey=controlPlaneName
 	Propagated []PropagateStatus `json:"propagated,omitempty"`
 }
