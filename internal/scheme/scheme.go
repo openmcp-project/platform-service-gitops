@@ -12,6 +12,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	clustersv1alpha1 "github.com/openmcp-project/openmcp-operator/api/clusters/v1alpha1"
 	corev2alpha1 "github.com/openmcp-project/openmcp-operator/api/core/v2alpha1"
@@ -53,6 +54,7 @@ func initOnboarding() {
 	utilruntime.Must(corev2alpha1.AddToScheme(Onboarding))
 	utilruntime.Must(clustersv1alpha1.AddToScheme(Onboarding))
 	utilruntime.Must(sourcev1.AddToScheme(Onboarding))
+	utilruntime.Must(kustomizev1.AddToScheme(Onboarding))
 }
 
 func initMCP() {
