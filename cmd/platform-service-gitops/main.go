@@ -20,8 +20,6 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
-
 	"github.com/openmcp-project/controller-utils/pkg/clusters"
 	crdutil "github.com/openmcp-project/controller-utils/pkg/crds"
 	"github.com/openmcp-project/controller-utils/pkg/logging"
@@ -297,11 +295,6 @@ func runCommand(cmd *cobra.Command, _ []string) error {
 	// Required for GitHubInstanceReconciler's source.Kind watch on the platform cluster.
 	if err := mgr.Add(platformCluster.Cluster()); err != nil {
 		return fmt.Errorf("unable to add platform cluster to manager: %w", err)
-	}
-
-	// Register Kustomization scheme on the manager scheme so the kustomization controller works.
-	if err := kustomizev1.AddToScheme(mgr.GetScheme()); err != nil {
-		return fmt.Errorf("unable to add kustomizev1 scheme: %w", err)
 	}
 
 	gitRepoReconciler := core.NewGitRepositoryReconciler(
