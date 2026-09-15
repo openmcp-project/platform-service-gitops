@@ -1,8 +1,10 @@
 # platform-service-gitops
-// TODO(user): Add simple overview of use/purpose
+
+A Kubernetes operator that provides GitOps integration for the Open Control Plane by managing GitHub App authentication and Git repository access through declarative custom resources.
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+
+Platform-service-gitops is a Kubebuilder-based controller that enables secure, automated Git repository access for multi-tenant Kubernetes platforms using GitHub App credentials. It introduces a layered resource model — `GitHubInstance`, `AppInstallation`, `GitRepository`, and `Kustomization` — that cleanly separates platform-owner responsibilities (managing GitHub App secrets and instance configuration) from end-user concerns (connecting repositories to their project namespaces). The controller automatically verifies App installations, mints scoped installation tokens, and propagates those tokens along with Flux GitRepository resources to target Managed Control Planes (MCPs). It supports both GitHub.com and GitHub Enterprise Server instances and handles token lifecycle management including automatic rotation before expiry. This design enables self-service GitOps onboarding where end users never need direct access to GitHub App private keys.
 
 ## Getting Started
 
