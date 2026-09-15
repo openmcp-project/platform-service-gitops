@@ -1,5 +1,8 @@
 # platform-service-gitops
 
+> [!WARNING]
+> This project is experimental and was created as a proof of concept during a hackathon. It is not suitable for use in production environments.
+
 A Kubernetes operator that provides GitOps integration for the Open Control Plane by managing GitHub App authentication and Git repository access through declarative custom resources.
 
 ## Description
