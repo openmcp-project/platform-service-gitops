@@ -1,8 +1,10 @@
 # platform-service-gitops
-// TODO(user): Add simple overview of use/purpose
+
+A Kubernetes operator that provides GitOps integration for the Open Control Plane by managing GitHub App authentication and Git repository access through declarative custom resources.
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+
+Platform-service-gitops is a Kubebuilder-based controller that enables secure, automated Git repository access for multi-tenant Kubernetes platforms using GitHub App credentials. It introduces a layered resource model — `GitHubInstance`, `AppInstallation`, `GitRepository`, and `Kustomization` — that cleanly separates platform-owner responsibilities (managing GitHub App secrets and instance configuration) from end-user concerns (connecting repositories to their project namespaces). The controller automatically verifies App installations, mints scoped installation tokens, and propagates those tokens along with Flux GitRepository resources to target Managed Control Planes (MCPs). It supports both GitHub.com and GitHub Enterprise Server instances and handles token lifecycle management including automatic rotation before expiry. This design enables self-service GitOps onboarding where end users never need direct access to GitHub App private keys.
 
 ## Getting Started
 
@@ -139,26 +141,35 @@ the '--force' flag and manually ensure that any custom configuration
 previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
 is manually re-applied afterwards.
 
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
+## Support, Feedback, Contributing
 
-**NOTE:** Run `make help` for more information on all potential `make` targets
+This project is open to feature requests/suggestions, bug reports etc. via [GitHub issues](https://github.com/openmcp-project/platform-service-gitops/issues). Contribution and feedback are encouraged and always welcome. For more information about how to contribute, the project structure, as well as additional contribution information, see our [Contribution Guidelines](https://github.com/openmcp-project/.github/blob/main/CONTRIBUTING.md).
 
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
+## Security / Disclosure
 
-## License
+If you find any bug that may be a security problem, please follow our instructions at [in our security policy](https://github.com/openmcp-project/platform-service-gitops/security/policy) on how to report it. Please do not create GitHub issues for security-related doubts or problems.
 
-Copyright 2026.
+## Code of Conduct
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+We as members, contributors, and leaders pledge to make participation in our community a harassment-free experience for everyone. By participating in this project, you agree to abide by its [Code of Conduct](https://github.com/openmcp-project/.github/blob/main/CODE_OF_CONDUCT.md) at all times.
 
-    http://www.apache.org/licenses/LICENSE-2.0
+## Licensing
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+Copyright OpenControlPlane contributors. Please see our [LICENSE](LICENSE) for copyright and license information. Detailed information including third-party components and their licensing/copyright information is available [via the REUSE tool](https://api.reuse.software/info/github.com/openmcp-project/platform-service-gitops).
+
+---
+
+<p align="center">
+  <a href="https://apeirora.eu/content/projects/">
+    <img alt="BMWK-EU funding logo" src="https://apeirora.eu/assets/img/BMWK-EU.png" width="300"/>
+  </a>
+</p>
+
+<p align="center">
+  OpenControlPlane is part of <a href="https://apeirora.eu/content/projects/">ApeiroRA</a>, an EU Important Project of Common European Interest (IPCEI-CIS).
+</p>
+
+<p align="center">
+  Copyright Linux Foundation Europe. For web site terms of use, trademark policy and other project policies please see <a href="https://linuxfoundation.eu/en/policies">https://linuxfoundation.eu/en/policies</a>.
+</p>
 
